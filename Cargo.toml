@@ -1,0 +1,13 @@
+[workspace]
+members = ["zenutils-fuzz"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85"
+license = "AGPL-3.0-only OR LicenseRef-Imazen-Commercial"
+repository = "https://github.com/imazen/zenutils"
+authors = ["Imazen LLC"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

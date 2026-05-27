@@ -1,0 +1,20 @@
+[package]
+name = "zenutils-fuzz"
+version = "0.1.0"
+description = "Fuzz-regression seed-corpus runner (RegressionSuite) shared across zen codec crates."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+readme = "README.md"
+keywords = ["fuzz", "regression", "testing", "test-helpers", "corpus"]
+categories = ["development-tools::testing"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

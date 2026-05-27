@@ -1,0 +1,5 @@
+/target
+.workongoing
+.jj/
+*.bak
+lcov.info
