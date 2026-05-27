@@ -6,7 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-authors.workspace = true
 readme = "README.md"
 keywords = ["fuzz", "regression", "testing", "test-helpers", "corpus"]
 categories = ["development-tools::testing"]
