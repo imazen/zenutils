@@ -1,11 +1,11 @@
 //! Public-API snapshot tests for whole workspaces.
 //!
-//! Regenerates committed public-API surface snapshots
-//! (`<workspace>/docs/public-api/<crate>.txt`, one per published crate) from a
-//! single `cargo test`, so API changes always show up as a git diff next to
-//! the code change that caused them. This is the shared implementation of the
-//! `public_api_doc.rs` test that previously lived as a drifting copy in every
-//! zen repo.
+//! Regenerates committed public-API surface snapshots (three disjoint files
+//! per crate under `<workspace>/docs/public-api/`) from a single
+//! `cargo test`, so API changes always show up as a git diff next to the
+//! code change that caused them. This is the shared implementation of the
+//! `public_api_doc.rs` test that previously lived as a drifting copy in
+//! every zen repo.
 //!
 //! ```no_run
 //! // tests/public_api_doc.rs — the whole file, for most workspaces:
@@ -24,6 +24,7 @@
 //!         .crates(["zenpipe", "zencodecs", "zenfilters"])
 //!         .no_extra_section("zenpipe") // --all-features does not build
 //!         .pinned_features("zencodecs", "jxl-encode,cms")
+//!         .exclude_features("zenfilters", ["experimental"])
 //!         .run();
 //! }
 //! ```
@@ -37,23 +38,44 @@
 //! - `check` → regenerate to memory, FAIL if a committed file is stale.
 //! - `off` → skipped (matrix jobs without nightly rustdoc).
 //!
-//! # Snapshot layout
+//! # Snapshot layout: three disjoint files per crate
 //!
-//! Each `<crate>.txt` contains:
-//! - `## summary` — generated line taxonomy (free functions vs methods vs
-//!   fields/variants vs auto-trait/derived impl lines, plus a per-module
-//!   table). Raw rustdoc item lines dwarf the real API; the summary keeps the
-//!   headline honest.
-//! - `## default features (N lines)` — the full surface. Auto-trait impl
-//!   lines are kept on purpose: losing `Send`/`Sync` on a public type is a
-//!   semver break and must show in the diff. Blanket impls are omitted
-//!   (`cargo public-api --simplified` equivalent).
-//! - `## added by non-default features: ... (N lines)` — DELTA only: lines
-//!   not present in the default section. Underscore-prefixed features are
-//!   internal/research gates and excluded; the feature list comes from
-//!   `cargo metadata`, so new features appear automatically.
-//! - `## removed by non-default features (N lines)` — only when enabling
-//!   features removes surface (a `cfg(not(feature = ...))` gate).
+//! - **`<crate>.txt`** — the supported surface: default features, hidden
+//!   items excluded. What a consumer who types `cargo add <crate>` gets.
+//! - **`<crate>.features.txt`** — ADDITIONS from non-excluded, non-`_*`
+//!   features (delta vs the default surface), hidden items excluded. A
+//!   `removed by features` section appears only when enabling features
+//!   removes surface (a `cfg(not(feature = ...))` gate).
+//! - **`<crate>.internal.txt`** — `#[doc(hidden)]` items (from every build
+//!   configuration) and the additions from EXCLUDED features (`_*`-prefixed
+//!   plus any named via [`ApiDoc::exclude_features`] — exclusion without
+//!   renaming, since renaming a feature is itself a semver break). Callable
+//!   surface, documented here instead of cluttering the supported files.
+//!
+//! No line appears in more than one file.
+//!
+//! # Signal-over-noise encodings (within each file)
+//!
+//! - The crate-name path prefix is stripped from every line (it is in the
+//!   header; signatures referencing the crate's own types shorten too).
+//! - **Auto traits** (`Freeze`/`Send`/`Sync`/`Unpin`/`RefUnwindSafe`/
+//!   `UnwindSafe`) collapse to one count line for types implementing all
+//!   six, plus explicit `Type: !Send !Sync` exception lines. A type losing
+//!   `Send` moves into the exceptions list — the semver diff guard survives
+//!   with ~95% fewer lines. (`StructuralPartialEq` is omitted: it tracks
+//!   the `PartialEq` derive, which the trait roster already records.
+//!   Conditional auto impls — `where` clauses — are preserved verbatim.)
+//! - **Trait impls** collapse to one roster line per type
+//!   (`Type: Clone, Debug, Display, Error`); the per-impl method bodies are
+//!   dropped because their signatures are fixed by the trait's own
+//!   definition. `core`/`alloc`/`std` trait paths shorten to their last
+//!   segment; other crates' traits keep their full path. Conditional
+//!   (`where`-bearing) trait impls are preserved verbatim below the roster.
+//! - Blanket impls are omitted entirely (compiler-guaranteed; zero semver
+//!   signal).
+//! - Re-export duplicates (the same item reachable at several paths with an
+//!   identical signature) list the shortest path once with an
+//!   `[also: other::path]` annotation.
 //!
 //! # Toolchain
 //!
@@ -66,7 +88,7 @@
 //! is deliberately not used: in public-api 0.52.1 it lags the crate's own
 //! `rustdoc-types` requirement and produces unparsable format-55 JSON.)
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -77,12 +99,13 @@ fn toolchain() -> String {
     std::env::var("ZEN_API_DOC_TOOLCHAIN").unwrap_or_else(|_| "nightly".to_owned())
 }
 
-/// How the extra (non-default-features) snapshot section is built for one
+/// How the extra (non-default-features) snapshot file is built for one
 /// crate.
 enum Extra {
-    /// All manifest features except `default` and `_*`-prefixed (default).
+    /// All manifest features except `default`, `_*`-prefixed, and
+    /// explicitly excluded ones (default).
     PublicFeatures,
-    /// No extra section — snapshot default features only.
+    /// No features file content — snapshot default features only.
     None,
     /// Pinned `--features` csv (for crates whose full feature powerset
     /// doesn't build).
@@ -129,6 +152,7 @@ pub fn run() {
 pub struct ApiDoc {
     crates: Option<Vec<String>>,
     overrides: Vec<(String, Extra)>,
+    excluded: Vec<(String, Vec<String>)>,
     out_dir: Option<String>,
 }
 
@@ -149,19 +173,35 @@ impl ApiDoc {
         self
     }
 
-    /// Skip the extra-features section for `crate_name` (its full feature
+    /// Skip the features file content for `crate_name` (its full feature
     /// set doesn't build, or default features are the only public surface).
     pub fn no_extra_section(mut self, crate_name: &str) -> Self {
         self.overrides.push((crate_name.to_owned(), Extra::None));
         self
     }
 
-    /// Use a pinned `--features` csv for `crate_name`'s extra section
-    /// instead of "all features except `default` and `_*`".
+    /// Use a pinned `--features` csv for `crate_name`'s features file
+    /// instead of "all features except `default`, `_*`, and excluded".
     pub fn pinned_features(mut self, crate_name: &str, features_csv: &str) -> Self {
         self.overrides.push((
             crate_name.to_owned(),
             Extra::Pinned(features_csv.to_owned()),
+        ));
+        self
+    }
+
+    /// Treat the named features of `crate_name` as EXCLUDED: their surface
+    /// is documented in `<crate>.internal.txt` instead of the supported
+    /// files. This is how `experimental`-style gates are kept out of the
+    /// headline without the semver break of renaming them to `_*`.
+    pub fn exclude_features<I, S>(mut self, crate_name: &str, features: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.excluded.push((
+            crate_name.to_owned(),
+            features.into_iter().map(Into::into).collect(),
         ));
         self
     }
@@ -218,25 +258,32 @@ impl ApiDoc {
                 .find(|(name, _)| name == package)
                 .map(|(_, e)| e)
                 .unwrap_or(&Extra::PublicFeatures);
-            let doc = snapshot_one(&workspace_root, &meta, package, extra);
-            let path = out_dir.join(format!("{package}.txt"));
-            let existing = std::fs::read_to_string(&path).ok();
-
-            if check {
-                assert_eq!(
-                    existing.as_deref(),
-                    Some(doc.as_str()),
-                    "committed public-API snapshot for {package} is stale: run \
-                     `cargo test` locally and commit the regenerated {}",
-                    path.display()
-                );
-            } else if existing.as_deref() != Some(doc.as_str()) {
-                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::fs::write(&path, &doc).unwrap();
-                eprintln!(
-                    "regenerated {} — review and commit the diff",
-                    path.display()
-                );
+            let excluded_cfg: Vec<String> = self
+                .excluded
+                .iter()
+                .filter(|(name, _)| name == package)
+                .flat_map(|(_, f)| f.iter().cloned())
+                .collect();
+            let files = snapshot_one(&workspace_root, &meta, package, extra, &excluded_cfg);
+            for (suffix, doc) in files {
+                let path = out_dir.join(format!("{package}{suffix}"));
+                let existing = std::fs::read_to_string(&path).ok();
+                if check {
+                    assert_eq!(
+                        existing.as_deref(),
+                        Some(doc.as_str()),
+                        "committed public-API snapshot for {package} is stale: run \
+                         `cargo test` locally and commit the regenerated {}",
+                        path.display()
+                    );
+                } else if existing.as_deref() != Some(doc.as_str()) {
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    std::fs::write(&path, &doc).unwrap();
+                    eprintln!(
+                        "regenerated {} — review and commit the diff",
+                        path.display()
+                    );
+                }
             }
         }
     }
@@ -281,182 +328,762 @@ fn discover_publishable_libs(meta: &serde_json::Value) -> Vec<String> {
     names
 }
 
-/// All manifest features of `package` except `default` and underscore-
-/// prefixed internal gates, sorted for determinism.
-fn public_features(meta: &serde_json::Value, package: &str) -> Vec<String> {
+/// Manifest features of `package` split into (included, excluded): excluded
+/// = `_*`-prefixed plus the configured exclusions; `default` is neither.
+fn split_features(
+    meta: &serde_json::Value,
+    package: &str,
+    excluded_cfg: &[String],
+) -> (Vec<String>, Vec<String>) {
     let pkg = meta["packages"]
         .as_array()
         .expect("packages array")
         .iter()
         .find(|p| p["name"] == package)
         .unwrap_or_else(|| panic!("{package} not in workspace metadata"));
-    let mut feats: Vec<String> = pkg["features"]
-        .as_object()
-        .expect("features map")
-        .keys()
-        .filter(|k| *k != "default" && !k.starts_with('_'))
-        .cloned()
-        .collect();
-    feats.sort();
-    feats
+    let mut included = Vec::new();
+    let mut excluded = Vec::new();
+    for k in pkg["features"].as_object().expect("features map").keys() {
+        if k == "default" {
+            continue;
+        }
+        if k.starts_with('_') || excluded_cfg.iter().any(|e| e == k) {
+            excluded.push(k.clone());
+        } else {
+            included.push(k.clone());
+        }
+    }
+    included.sort();
+    excluded.sort();
+    (included, excluded)
 }
 
 /// Build rustdoc JSON for `package` with the given features and render the
-/// public API lines (sorted, blanket impls omitted — the
-/// `cargo public-api --simplified` equivalent; auto-trait and derived impls
-/// are kept so `Send`/`Sync` regressions show in the diff).
-fn surface(workspace_root: &Path, package: &str, features: &[String]) -> Vec<String> {
-    let mut builder = rustdoc_json::Builder::default()
-        .toolchain(toolchain())
-        .manifest_path(workspace_root.join("Cargo.toml"))
-        .package(package)
-        .quiet(true);
-    if !features.is_empty() {
-        builder = builder.features(features);
-    }
-    let json_path = builder.build().unwrap_or_else(|e| {
-        panic!(
-            "rustdoc JSON build failed for {package} (features {features:?}): {e}; \
-             set ZEN_API_DOC=off to skip the public-API snapshot test"
-        )
-    });
+/// public API lines (sorted, blanket impls omitted). With `hidden`,
+/// `#[doc(hidden)]` items are documented too (via a directly-spawned
+/// `cargo rustdoc` carrying `--document-hidden-items`, which the
+/// `rustdoc-json` builder does not expose).
+fn try_surface(
+    workspace_root: &Path,
+    package: &str,
+    features: &[String],
+    hidden: bool,
+) -> Result<Vec<String>, String> {
+    let json_path = if hidden {
+        build_hidden_json(workspace_root, package, features)?
+    } else {
+        let mut builder = rustdoc_json::Builder::default()
+            .toolchain(toolchain())
+            .manifest_path(workspace_root.join("Cargo.toml"))
+            .package(package)
+            .quiet(true);
+        if !features.is_empty() {
+            builder = builder.features(features);
+        }
+        builder
+            .build()
+            .map_err(|e| format!("rustdoc JSON build failed: {e}"))?
+    };
     let api = public_api::Builder::from_rustdoc_json(json_path)
         .omit_blanket_impls(true)
         .sorted(true)
         .build()
-        .unwrap_or_else(|e| {
-            panic!(
-                "public-api parse failed for {package}: {e}\n\
-                 (usually a rustdoc JSON format mismatch between the '{}' \
-                 toolchain and the rustdoc-types version public-api compiled \
-                 against — update the toolchain, or pin one via the \
-                 ZEN_API_DOC_TOOLCHAIN env var)",
+        .map_err(|e| {
+            format!(
+                "public-api parse failed: {e} (usually a rustdoc JSON format \
+                 mismatch between the '{}' toolchain and the rustdoc-types \
+                 version public-api compiled against — update the toolchain, \
+                 or pin one via the ZEN_API_DOC_TOOLCHAIN env var)",
                 toolchain()
             )
-        });
-    api.items().map(|item| item.to_string()).collect()
+        })?;
+    Ok(api.items().map(|item| item.to_string()).collect())
 }
+
+/// `cargo rustdoc` invocation mirroring `rustdoc_json::Builder`'s, plus the
+/// nightly-only `--document-hidden-items`. Run AFTER the normal builds of
+/// the same crate — it overwrites `target/doc/<lib>.json`, which the caller
+/// parses immediately.
+fn build_hidden_json(
+    workspace_root: &Path,
+    package: &str,
+    features: &[String],
+) -> Result<PathBuf, String> {
+    let mut cmd = Command::new("rustup");
+    cmd.args(["run", &toolchain(), "cargo", "rustdoc"])
+        .arg("--manifest-path")
+        .arg(workspace_root.join("Cargo.toml"))
+        .args(["--package", package, "--lib", "--quiet"]);
+    if !features.is_empty() {
+        cmd.args(["--features", &features.join(",")]);
+    }
+    cmd.args([
+        "--",
+        "-Z",
+        "unstable-options",
+        "--output-format",
+        "json",
+        "--document-hidden-items",
+        "--cap-lints",
+        "allow",
+    ]);
+    let out = cmd
+        .output()
+        .map_err(|e| format!("failed to spawn cargo rustdoc: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "hidden-items rustdoc build failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .find(|l| l.contains("error"))
+                .unwrap_or("see rustdoc output")
+        ));
+    }
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| workspace_root.join("target"));
+    let path = target_dir
+        .join("doc")
+        .join(format!("{}.json", package.replace('-', "_")));
+    if !path.exists() {
+        return Err(format!(
+            "hidden-items rustdoc JSON not found at {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+fn surface(workspace_root: &Path, package: &str, features: &[String], hidden: bool) -> Vec<String> {
+    try_surface(workspace_root, package, features, hidden).unwrap_or_else(|e| {
+        panic!(
+            "{e} for {package} (features {features:?}); \
+             set ZEN_API_DOC=off to skip the public-API snapshot test"
+        )
+    })
+}
+
+const FILE_MAIN: &str = ".txt";
+const FILE_FEATURES: &str = ".features.txt";
+const FILE_INTERNAL: &str = ".internal.txt";
 
 fn snapshot_one(
     workspace_root: &Path,
     meta: &serde_json::Value,
     package: &str,
     extra: &Extra,
-) -> String {
-    let default_lines = surface(workspace_root, package, &[]);
+    excluded_cfg: &[String],
+) -> Vec<(&'static str, String)> {
+    let crate_ident = package.replace('-', "_");
+    let (auto_included, auto_excluded) = split_features(meta, package, excluded_cfg);
 
-    let (feature_label, extra_features) = match extra {
+    let (feature_label, included_feats) = match extra {
         Extra::None => (String::new(), Vec::new()),
-        Extra::PublicFeatures => {
-            let feats = public_features(meta, package);
-            (feats.join(","), feats)
-        }
+        Extra::PublicFeatures => (auto_included.join(","), auto_included),
         Extra::Pinned(csv) => (
             csv.clone(),
             csv.split(',').map(str::to_owned).collect::<Vec<_>>(),
         ),
     };
+    let excluded_feats = auto_excluded;
 
-    let (delta_lines, removed_lines) = if extra_features.is_empty() {
-        (Vec::new(), Vec::new())
+    // Build matrix. The default + included builds are load-bearing (panic on
+    // failure); the excluded / hidden builds degrade to a note in the
+    // internal file (excluded feature unions are allowed to be unbuildable).
+    let base_lines = surface(workspace_root, package, &[], false);
+
+    let included_lines = if included_feats.is_empty() {
+        base_lines.clone()
     } else {
-        let all_lines = surface(workspace_root, package, &extra_features);
-        let default_set: HashSet<&str> = default_lines.iter().map(String::as_str).collect();
-        let all_set: HashSet<&str> = all_lines.iter().map(String::as_str).collect();
-        (
-            all_lines
-                .iter()
-                .filter(|l| !default_set.contains(l.as_str()))
-                .cloned()
-                .collect(),
-            default_lines
-                .iter()
-                .filter(|l| !all_set.contains(l.as_str()))
-                .cloned()
-                .collect(),
-        )
+        surface(workspace_root, package, &included_feats, false)
     };
 
-    let mut doc = format!(
-        "# {package} public API surface\n\
-         # Generated by zenutils-apidoc from a `cargo test` snapshot test\n\
-         # (regenerated on every `cargo test`; ZEN_API_DOC=check verifies, =off skips).\n\
-         # The features section is a DELTA: only lines added relative to the\n\
-         # default-features section. Underscore-prefixed features are internal\n\
-         # and excluded. Line counts are raw rustdoc item lines — see the\n\
-         # summary block for the honest item taxonomy.\n\
-         # DO NOT EDIT BY HAND — commit regenerated changes together with the code.\n\n"
-    );
-    doc.push_str(&render_summary(
-        &default_lines,
-        &delta_lines,
-        removed_lines.len(),
-    ));
+    let mut notes: Vec<String> = Vec::new();
 
-    let _ = write!(
-        doc,
-        "\n## default features ({} lines)\n\n",
-        default_lines.len()
-    );
-    for line in &default_lines {
-        doc.push_str(line);
-        doc.push('\n');
-    }
-    eprintln!(
-        "{package} [default features]: {} lines",
-        default_lines.len()
-    );
-
-    if !extra_features.is_empty() {
-        let _ = write!(
-            doc,
-            "\n## added by non-default features: {feature_label} ({} lines)\n\n",
-            delta_lines.len()
-        );
-        for line in &delta_lines {
-            doc.push_str(line);
-            doc.push('\n');
-        }
-        eprintln!(
-            "{package} [+{feature_label}]: {} added lines",
-            delta_lines.len()
-        );
-        if !removed_lines.is_empty() {
-            let _ = write!(
-                doc,
-                "\n## removed by non-default features ({} lines)\n\n",
-                removed_lines.len()
-            );
-            for line in &removed_lines {
-                doc.push_str(line);
-                doc.push('\n');
+    let mut with_excluded_feats = included_feats.clone();
+    with_excluded_feats.extend(excluded_feats.iter().cloned());
+    let excluded_lines = if excluded_feats.is_empty() {
+        included_lines.clone()
+    } else {
+        match try_surface(workspace_root, package, &with_excluded_feats, false) {
+            Ok(lines) => lines,
+            Err(e) => {
+                notes.push(format!(
+                    "excluded-feature surface ({}) not buildable: {}",
+                    excluded_feats.join(","),
+                    e.lines().next().unwrap_or("unknown error")
+                ));
+                included_lines.clone()
             }
-            eprintln!(
-                "{package} [+{feature_label}]: {} REMOVED lines (cfg(not) gate?)",
-                removed_lines.len()
-            );
+        }
+    };
+
+    // Hidden build: widest feature set that built, with doc(hidden) items on.
+    let hidden_base = if excluded_lines.len() >= included_lines.len() && notes.is_empty() {
+        &with_excluded_feats
+    } else {
+        &included_feats
+    };
+    let hidden_lines = match try_surface(workspace_root, package, hidden_base, true) {
+        Ok(lines) => lines,
+        Err(e) => {
+            notes.push(format!(
+                "doc(hidden) surface not buildable: {}",
+                e.lines().next().unwrap_or("unknown error")
+            ));
+            excluded_lines.clone()
+        }
+    };
+
+    // Disjoint line sets.
+    let base_set: HashSet<&str> = base_lines.iter().map(String::as_str).collect();
+    let included_set: HashSet<&str> = included_lines.iter().map(String::as_str).collect();
+    let excluded_set: HashSet<&str> = excluded_lines.iter().map(String::as_str).collect();
+
+    let feat_added: Vec<String> = included_lines
+        .iter()
+        .filter(|l| !base_set.contains(l.as_str()))
+        .cloned()
+        .collect();
+    let feat_removed: Vec<String> = base_lines
+        .iter()
+        .filter(|l| !included_set.contains(l.as_str()))
+        .cloned()
+        .collect();
+    let excl_added: Vec<String> = excluded_lines
+        .iter()
+        .filter(|l| !included_set.contains(l.as_str()))
+        .cloned()
+        .collect();
+    let hidden_added: Vec<String> = hidden_lines
+        .iter()
+        .filter(|l| !excluded_set.contains(l.as_str()))
+        .cloned()
+        .collect();
+
+    let main = transform(&base_lines, &crate_ident);
+    let features = transform(&feat_added, &crate_ident);
+    let removed: Vec<String> = feat_removed
+        .iter()
+        .map(|l| strip_crate_prefix(l, &crate_ident))
+        .collect();
+    let mut internal_lines = hidden_added;
+    internal_lines.extend(excl_added.iter().cloned());
+    internal_lines.sort();
+    internal_lines.dedup();
+    let excl_added_set: HashSet<&str> = excl_added.iter().map(String::as_str).collect();
+    let hidden_count = internal_lines
+        .iter()
+        .filter(|l| !excl_added_set.contains(l.as_str()))
+        .count();
+    let internal = transform(&internal_lines, &crate_ident);
+
+    let header_common = "# (regenerated on every `cargo test` by zenutils-apidoc; \
+         ZEN_API_DOC=check verifies, =off skips).\n\
+         # Encodings: crate-name prefix stripped; auto traits collapse to a\n\
+         # count + exceptions; trait impls collapse to one roster line per\n\
+         # type (method signatures live at the trait definition); blanket\n\
+         # impls omitted; re-export duplicates annotated `[also: path]`.\n\
+         # DO NOT EDIT BY HAND — commit regenerated changes with the code.\n";
+
+    let overview = format!(
+        "#\n# files: {package}{FILE_MAIN} {} lines (supported surface) | \
+         {package}{FILE_FEATURES} {} added (features: {}) | \
+         {package}{FILE_INTERNAL} {} lines ({} hidden + {} excluded-feature)\n",
+        main.total_lines(),
+        features.total_lines(),
+        if feature_label.is_empty() {
+            "none"
+        } else {
+            &feature_label
+        },
+        internal.total_lines(),
+        hidden_count,
+        excl_added.len(),
+    );
+
+    let mut out = Vec::new();
+
+    // --- <crate>.txt : supported surface ---
+    let mut a = format!("# {package} public API — supported surface (default features)\n");
+    a.push_str(header_common);
+    a.push_str(&overview);
+    a.push('\n');
+    a.push_str(&main.render_summary());
+    a.push_str(&main.render_body());
+    out.push((FILE_MAIN, a));
+    eprintln!("{package} [supported]: {} lines", main.total_lines());
+
+    // --- <crate>.features.txt : non-excluded feature additions ---
+    let mut b = format!(
+        "# {package} public API — additions from non-default features\n\
+         # features: {}\n",
+        if feature_label.is_empty() {
+            "(none)"
+        } else {
+            &feature_label
+        }
+    );
+    b.push_str(header_common);
+    b.push('\n');
+    if features.total_lines() == 0 && removed.is_empty() {
+        b.push_str("(no additional public surface)\n");
+    } else {
+        b.push_str(&features.render_summary());
+        b.push_str(&features.render_body());
+        if !removed.is_empty() {
+            let _ = write!(b, "\n## removed by features ({} lines)\n\n", removed.len());
+            for l in &removed {
+                b.push_str(l);
+                b.push('\n');
+            }
         }
     }
-    doc
+    out.push((FILE_FEATURES, b));
+    eprintln!(
+        "{package} [+features {feature_label}]: {} added lines",
+        features.total_lines()
+    );
+
+    // --- <crate>.internal.txt : hidden + excluded-feature surface ---
+    let mut c = format!(
+        "# {package} public API — doc(hidden) items and excluded-feature surface\n\
+         # excluded features: {}\n",
+        if excluded_feats.is_empty() {
+            "(none)".to_owned()
+        } else {
+            excluded_feats.join(",")
+        }
+    );
+    c.push_str(header_common);
+    c.push('\n');
+    for n in &notes {
+        let _ = writeln!(c, "NOTE: {n}");
+    }
+    if internal.total_lines() == 0 {
+        c.push_str("(no hidden or excluded-feature surface)\n");
+    } else {
+        c.push_str(&internal.render_summary());
+        c.push_str(&internal.render_body());
+    }
+    out.push((FILE_INTERNAL, c));
+    eprintln!(
+        "{package} [internal]: {} lines ({} hidden, {} excluded-feature)",
+        internal.total_lines(),
+        hidden_count,
+        excl_added.len()
+    );
+
+    out
 }
 
 // ---------------------------------------------------------------------------
-// Line taxonomy: classify each public-api line so the summary reports honest
-// counts instead of a raw line total.
+// Transformation: raw public-api lines → encoded sections.
 
-/// Marker / auto traits whose impl lines are compiler-controlled plumbing
-/// (still diff-guarded — losing `Send` is a semver break — but counted apart
-/// from hand-written or derived trait impls).
-const AUTO_TRAITS: &[&str] = &[
-    "core::marker::Freeze",
-    "core::marker::Send",
-    "core::marker::StructuralPartialEq",
-    "core::marker::Sync",
-    "core::marker::Unpin",
-    "core::marker::UnsafeUnpin",
-    "core::panic::unwind_safe::RefUnwindSafe",
-    "core::panic::unwind_safe::UnwindSafe",
+const AUTO_TRAITS: [&str; 6] = [
+    "Freeze",
+    "RefUnwindSafe",
+    "Send",
+    "Sync",
+    "Unpin",
+    "UnwindSafe",
 ];
+
+/// Auto-trait paths → short name. `StructuralPartialEq` and the unstable
+/// `UnsafeUnpin` are dropped entirely (the former tracks the `PartialEq`
+/// derive, already in the roster; the latter is an unstable artifact).
+fn auto_trait_short(path: &str) -> Option<&'static str> {
+    match path {
+        "core::marker::Freeze" => Some("Freeze"),
+        "core::marker::Send" => Some("Send"),
+        "core::marker::Sync" => Some("Sync"),
+        "core::marker::Unpin" => Some("Unpin"),
+        "core::panic::unwind_safe::RefUnwindSafe" => Some("RefUnwindSafe"),
+        "core::panic::unwind_safe::UnwindSafe" => Some("UnwindSafe"),
+        _ => None,
+    }
+}
+
+fn is_dropped_marker(path: &str) -> bool {
+    matches!(
+        path,
+        "core::marker::StructuralPartialEq" | "core::marker::UnsafeUnpin"
+    )
+}
+
+#[derive(Default)]
+struct AutoInfo {
+    present: BTreeSet<&'static str>,
+    negative: BTreeSet<&'static str>,
+    conditional: Vec<String>,
+}
+
+#[derive(Default)]
+struct Transformed {
+    /// Item lines (after prefix-strip, member-drop, dedupe), in input order.
+    items: Vec<String>,
+    /// type → sorted trait names (non-auto, unconditional).
+    rosters: BTreeMap<String, BTreeSet<String>>,
+    /// Conditional (where-bearing) trait impls, verbatim.
+    conditional_impls: Vec<String>,
+    /// type → auto-trait info.
+    autos: BTreeMap<String, AutoInfo>,
+    tally: Tally,
+    per_module: BTreeMap<String, usize>,
+}
+
+impl Transformed {
+    fn auto_complete_count(&self) -> usize {
+        self.autos.values().filter(|a| auto_is_complete(a)).count()
+    }
+
+    fn auto_exceptions(&self) -> Vec<String> {
+        let mut v: Vec<String> = self
+            .autos
+            .iter()
+            .filter(|(_, a)| !auto_is_complete(a))
+            .map(|(ty, a)| {
+                let missing: Vec<String> = AUTO_TRAITS
+                    .iter()
+                    .filter(|t| !a.present.contains(*t))
+                    .map(|t| format!("!{t}"))
+                    .collect();
+                format!("{ty}: {}", missing.join(" "))
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    fn total_lines(&self) -> usize {
+        let auto_lines = if self.autos.is_empty() {
+            0
+        } else {
+            1 + self.auto_exceptions().len()
+        };
+        self.items.len() + self.rosters.len() + self.conditional_impls.len() + auto_lines
+    }
+
+    fn render_summary(&self) -> String {
+        let mut s = String::from("## summary\n#\n");
+        let t = &self.tally;
+        for (label, n) in [
+            ("pub modules", t.modules),
+            ("pub types (struct/enum/trait/alias)", t.types),
+            ("pub consts/statics", t.consts),
+            ("pub macros", t.macros),
+            ("free functions", t.free_fns),
+            ("inherent methods", t.assoc_fns),
+            ("struct fields", t.fields),
+            ("enum variants", t.variants),
+            ("re-exports", t.reexports),
+            (
+                "trait roster entries (type × trait)",
+                self.roster_entry_count(),
+            ),
+            (
+                "conditional trait impls (verbatim)",
+                self.conditional_impls.len(),
+            ),
+            ("auto-trait-complete types", self.auto_complete_count()),
+            ("auto-trait exceptions", self.auto_exceptions().len()),
+            ("other", t.other),
+        ] {
+            if n == 0 {
+                continue;
+            }
+            let _ = writeln!(s, "#   {label:<38} {n:>6}");
+        }
+        if !self.per_module.is_empty() {
+            s.push_str("#\n# per-module pub lines:\n");
+            for (module, n) in &self.per_module {
+                let _ = writeln!(s, "#   {module:<28} {n:>6}");
+            }
+        }
+        s
+    }
+
+    fn roster_entry_count(&self) -> usize {
+        self.rosters.values().map(BTreeSet::len).sum()
+    }
+
+    fn render_body(&self) -> String {
+        let mut s = String::new();
+        let _ = write!(s, "\n## items ({} lines)\n\n", self.items.len());
+        for l in &self.items {
+            s.push_str(l);
+            s.push('\n');
+        }
+        if !self.rosters.is_empty() || !self.conditional_impls.is_empty() {
+            let _ = write!(s, "\n## trait impls ({} types)\n\n", self.rosters.len());
+            for (ty, traits) in &self.rosters {
+                let list: Vec<&str> = traits.iter().map(String::as_str).collect();
+                let _ = writeln!(s, "{ty}: {}", list.join(", "));
+            }
+            for l in &self.conditional_impls {
+                s.push_str(l);
+                s.push('\n');
+            }
+        }
+        if !self.autos.is_empty() {
+            let exceptions = self.auto_exceptions();
+            let _ = write!(s, "\n## auto traits\n\n");
+            let _ = writeln!(
+                s,
+                "{} types implement all of: {}",
+                self.auto_complete_count(),
+                AUTO_TRAITS.join(", ")
+            );
+            for l in &exceptions {
+                s.push_str(l);
+                s.push('\n');
+            }
+        }
+        s
+    }
+}
+
+fn auto_is_complete(a: &AutoInfo) -> bool {
+    a.negative.is_empty()
+        && a.conditional.is_empty()
+        && AUTO_TRAITS.iter().all(|t| a.present.contains(t))
+}
+
+/// Strip `{crate_ident}::` everywhere in the line (paths and signatures).
+fn strip_crate_prefix(line: &str, crate_ident: &str) -> String {
+    line.replace(&format!("{crate_ident}::"), "")
+}
+
+/// `core::`/`alloc::`/`std::` trait paths shorten to their final segment
+/// (with generic args); everything else is kept whole.
+fn simplify_trait_path(path: &str) -> String {
+    let root = path.split("::").next().unwrap_or("");
+    if matches!(root, "core" | "alloc" | "std") {
+        path_segments(path)
+            .last()
+            .map_or_else(|| path.to_owned(), |s| (*s).to_owned())
+    } else {
+        path.to_owned()
+    }
+}
+
+/// Parse an impl line body (`Trait for Type` / `Type` / `!Trait for Type`),
+/// already `where`-checked by the caller.
+enum ImplKind<'a> {
+    Inherent,
+    Trait {
+        trait_path: &'a str,
+        for_type: &'a str,
+        negative: bool,
+    },
+}
+
+fn parse_impl_body(body: &str) -> ImplKind<'_> {
+    let (negative, body) = match body.strip_prefix('!') {
+        Some(rest) => (true, rest),
+        None => (false, body),
+    };
+    // Find ` for ` at angle-depth 0.
+    let bytes = body.as_bytes();
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i + 5 <= bytes.len() {
+        match bytes[i] {
+            b'<' | b'(' => depth += 1,
+            b'>' | b')' => depth = depth.saturating_sub(1),
+            b' ' if depth == 0 && body[i..].starts_with(" for ") => {
+                return ImplKind::Trait {
+                    trait_path: &body[..i],
+                    for_type: &body[i + 5..],
+                    negative,
+                };
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    ImplKind::Inherent
+}
+
+/// The full transformation pipeline for one disjoint line set.
+fn transform(lines: &[String], crate_ident: &str) -> Transformed {
+    let stripped: Vec<String> = lines
+        .iter()
+        .map(|l| strip_crate_prefix(l, crate_ident))
+        .collect();
+
+    let mut t = Transformed::default();
+    // Trait-impl member attribution: members directly follow their impl line
+    // in public-api's sorted output (verified empirically); track the type
+    // whose trait-impl members should be dropped.
+    let mut trait_member_ctx: Option<String> = None;
+
+    let mut kept: Vec<String> = Vec::new();
+    for line in &stripped {
+        let l = strip_attrs(line);
+        if let Some(rest) = impl_body_text(l) {
+            let (body, has_where) = match rest.find(" where ") {
+                Some(i) => (&rest[..i], true),
+                None => (rest, false),
+            };
+            match parse_impl_body(body) {
+                ImplKind::Inherent => {
+                    // The inherent-impl line itself carries no information
+                    // beyond its members, which are kept.
+                    trait_member_ctx = None;
+                }
+                ImplKind::Trait {
+                    trait_path,
+                    for_type,
+                    negative,
+                } => {
+                    trait_member_ctx = Some(for_type.to_owned());
+                    if is_dropped_marker(trait_path) {
+                        continue;
+                    }
+                    if let Some(short) = auto_trait_short(trait_path) {
+                        let info = t.autos.entry(for_type.to_owned()).or_default();
+                        if has_where {
+                            info.conditional.push(line.clone());
+                        } else if negative {
+                            info.negative.insert(short);
+                        } else {
+                            info.present.insert(short);
+                        }
+                        continue;
+                    }
+                    if has_where || negative {
+                        t.conditional_impls.push(line.clone());
+                    } else {
+                        t.rosters
+                            .entry(for_type.to_owned())
+                            .or_default()
+                            .insert(simplify_trait_path(trait_path));
+                    }
+                }
+            }
+            continue;
+        }
+
+        // Non-impl line. Drop fn/const/type members of the current
+        // trait-impl context (their signatures are fixed by the trait);
+        // fields and variants are the type's own surface and always kept.
+        if let Some(ctx) = &trait_member_ctx {
+            if let Some(body) = l.strip_prefix("pub ") {
+                let member = body
+                    .strip_prefix("fn ")
+                    .or_else(|| body.strip_prefix("const "))
+                    .or_else(|| body.strip_prefix("type "));
+                if let Some(sig) = member {
+                    let path = leading_path(sig);
+                    if path
+                        .strip_prefix(ctx.as_str())
+                        .is_some_and(|r| r.starts_with("::"))
+                    {
+                        continue;
+                    }
+                }
+            }
+            trait_member_ctx = None;
+        }
+        classify(l, &mut t.tally, &mut t.per_module);
+        kept.push(line.clone());
+    }
+
+    t.items = dedupe_reexport_paths(kept);
+    t
+}
+
+/// Collapse identical items reachable at multiple paths: keep the shortest
+/// path, annotate with the alternates' parent paths. Key = item kind + final
+/// path segment + signature tail; only exact-signature duplicates collapse.
+fn dedupe_reexport_paths(lines: Vec<String>) -> Vec<String> {
+    #[derive(Default)]
+    struct Group {
+        first_idx: usize,
+        entries: Vec<(usize, String, String)>, // (idx, path, full line)
+    }
+    let mut groups: BTreeMap<String, Group> = BTreeMap::new();
+    for (idx, line) in lines.iter().enumerate() {
+        let l = strip_attrs(line);
+        let Some(body) = l.strip_prefix("pub ") else {
+            continue;
+        };
+        let (kind, rest) = match body.split_once(' ') {
+            Some((k @ ("fn" | "struct" | "enum" | "trait" | "type" | "const" | "static"), r)) => {
+                (k, r)
+            }
+            _ => continue,
+        };
+        let path = leading_path(rest);
+        let segs = path_segments(path);
+        let Some(last) = segs.last() else { continue };
+        // Members (Type::method) never dedupe — only top-level items.
+        if segs.len() >= 2
+            && segs[segs.len() - 2]
+                .chars()
+                .next()
+                .is_some_and(char::is_uppercase)
+        {
+            continue;
+        }
+        let sig_tail = &rest[path.len()..];
+        let key = format!("{kind} {last}{sig_tail}");
+        let g = groups.entry(key).or_insert_with(|| Group {
+            first_idx: idx,
+            entries: Vec::new(),
+        });
+        g.first_idx = g.first_idx.min(idx);
+        g.entries.push((idx, path.to_owned(), line.clone()));
+    }
+
+    let mut drop_idx: HashSet<usize> = HashSet::new();
+    let mut annotate: BTreeMap<usize, String> = BTreeMap::new();
+    for g in groups.values() {
+        if g.entries.len() < 2 {
+            continue;
+        }
+        let canonical = g
+            .entries
+            .iter()
+            .min_by_key(|(idx, path, _)| (path.len(), *idx))
+            .expect("non-empty group");
+        let mut others: Vec<String> = g
+            .entries
+            .iter()
+            .filter(|(idx, _, _)| *idx != canonical.0)
+            .map(|(idx, path, _)| {
+                drop_idx.insert(*idx);
+                parent_path(path)
+            })
+            .collect();
+        others.sort();
+        others.dedup();
+        annotate.insert(canonical.0, format!(" [also: {}]", others.join(", ")));
+    }
+
+    lines
+        .into_iter()
+        .enumerate()
+        .filter(|(idx, _)| !drop_idx.contains(idx))
+        .map(|(idx, line)| match annotate.get(&idx) {
+            Some(suffix) => format!("{line}{suffix}"),
+            None => line,
+        })
+        .collect()
+}
+
+fn parent_path(path: &str) -> String {
+    let segs = path_segments(path);
+    if segs.len() <= 1 {
+        "(root)".to_owned()
+    } else {
+        segs[..segs.len() - 1].join("::")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Line taxonomy (item lines only; impls are handled by the transform).
 
 #[derive(Default, Clone, Copy)]
 struct Tally {
@@ -468,34 +1095,13 @@ struct Tally {
     assoc_fns: usize,
     fields: usize,
     variants: usize,
-    impls_auto: usize,
-    impls_other: usize,
     reexports: usize,
     other: usize,
 }
 
-impl Tally {
-    fn rows(&self) -> [(&'static str, usize); 12] {
-        [
-            ("pub modules", self.modules),
-            ("pub types (struct/enum/trait/alias)", self.types),
-            ("pub consts/statics", self.consts),
-            ("pub macros", self.macros),
-            ("free functions", self.free_fns),
-            ("associated functions (methods)", self.assoc_fns),
-            ("struct fields", self.fields),
-            ("enum variants", self.variants),
-            ("impl lines (auto traits)", self.impls_auto),
-            ("impl lines (derived + manual)", self.impls_other),
-            ("re-exports", self.reexports),
-            ("other", self.other),
-        ]
-    }
-}
-
 /// For an `impl` line, return the part after `impl` / `impl<...>` — the
 /// implemented trait (or inherent type). `None` if not an impl line.
-fn impl_body(line: &str) -> Option<&str> {
+fn impl_body_text(line: &str) -> Option<&str> {
     let rest = line.strip_prefix("impl")?;
     if let Some(r) = rest.strip_prefix(' ') {
         return Some(r);
@@ -581,12 +1187,13 @@ fn leading_path(body: &str) -> &str {
     body
 }
 
-/// `module` bucket for a path like `crate::module::Item::member` — the
-/// second segment when it names a module (lowercase), else `(root)`.
+/// `module` bucket for a path like `module::Item::member` (crate prefix
+/// already stripped) — the first segment when it names a module
+/// (lowercase), else `(root)`.
 fn module_of(path: &str) -> String {
     let segs = path_segments(path);
-    if segs.len() >= 3 {
-        let m = segs[1].split('<').next().unwrap_or(segs[1]);
+    if segs.len() >= 2 {
+        let m = segs[0].split('<').next().unwrap_or(segs[0]);
         if m.chars()
             .next()
             .is_some_and(|c| c.is_lowercase() || c == '_')
@@ -597,22 +1204,11 @@ fn module_of(path: &str) -> String {
     "(root)".to_owned()
 }
 
-fn classify(line: &str, tally: &mut Tally, per_module: &mut BTreeMap<String, usize>) {
-    let l = strip_attrs(line);
-    if let Some(rest) = impl_body(l) {
-        // Impl lines carry no `pub` path; not attributed to a module.
-        if AUTO_TRAITS.iter().any(|t| rest.starts_with(t)) {
-            tally.impls_auto += 1;
-        } else {
-            tally.impls_other += 1;
-        }
-        return;
-    }
+fn classify(l: &str, tally: &mut Tally, per_module: &mut BTreeMap<String, usize>) {
     let Some(body) = l.strip_prefix("pub ") else {
         tally.other += 1;
         return;
     };
-    // Track the module bucket for every pub line.
     let keyword_stripped = body
         .strip_prefix("mod ")
         .or_else(|| body.strip_prefix("struct "))
@@ -671,69 +1267,132 @@ fn classify(line: &str, tally: &mut Tally, per_module: &mut BTreeMap<String, usi
     }
 }
 
-fn tally_section(lines: &[String]) -> (Tally, BTreeMap<String, usize>) {
-    let mut tally = Tally::default();
-    let mut per_module = BTreeMap::new();
-    for line in lines {
-        classify(line, &mut tally, &mut per_module);
-    }
-    (tally, per_module)
-}
-
-fn render_summary(
-    default_lines: &[String],
-    delta_lines: &[String],
-    removed_count: usize,
-) -> String {
-    let (dt, dmods) = tally_section(default_lines);
-    let (ft, fmods) = tally_section(delta_lines);
-    let mut s = String::from("## summary\n#\n");
-    let _ = writeln!(s, "# {:<38} {:>8} {:>10}", "kind", "default", "+features");
-    let _ = writeln!(
-        s,
-        "# {:<38} {:>8} {:>10}",
-        "lines total",
-        default_lines.len(),
-        delta_lines.len()
-    );
-    for ((label, d), (_, f)) in dt.rows().into_iter().zip(ft.rows()) {
-        if d == 0 && f == 0 {
-            continue;
-        }
-        let _ = writeln!(s, "#   {label:<36} {d:>8} {f:>10}");
-    }
-    if removed_count > 0 {
-        let _ = writeln!(
-            s,
-            "#   {:<36} {:>8} {:>10}",
-            "removed by features", "-", removed_count
-        );
-    }
-    s.push_str("#\n# per-module pub lines (default + feature-additions):\n");
-    let modules: BTreeMap<&str, (usize, usize)> = dmods
-        .iter()
-        .map(|(m, n)| (m.as_str(), (*n, 0)))
-        .chain(fmods.iter().map(|(m, n)| (m.as_str(), (0, *n))))
-        .fold(BTreeMap::new(), |mut acc, (m, (d, f))| {
-            let e = acc.entry(m).or_insert((0, 0));
-            e.0 += d;
-            e.1 += f;
-            acc
-        });
-    for (module, (d, f)) in modules {
-        let _ = writeln!(s, "#   {module:<24} {d:>6} +{f}");
-    }
-    s
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn t(lines: &[&str]) -> Transformed {
+        let owned: Vec<String> = lines.iter().map(|s| (*s).to_owned()).collect();
+        transform(&owned, "demo")
+    }
+
+    #[test]
+    fn crate_prefix_stripped_everywhere() {
+        let out = t(&["pub fn demo::util::helper(demo::util::Thing) -> demo::Kind"]);
+        assert_eq!(out.items, ["pub fn util::helper(util::Thing) -> Kind"]);
+    }
+
+    #[test]
+    fn trait_impls_collapse_to_roster_and_members_drop() {
+        let out = t(&[
+            "impl core::clone::Clone for demo::Thing",
+            "pub fn demo::Thing::clone(&self) -> demo::Thing",
+            "impl core::fmt::Debug for demo::Thing",
+            "pub fn demo::Thing::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result",
+            "impl serde::ser::Serialize for demo::Thing",
+            "pub fn demo::Thing::serialize<S>(&self, S) -> Result<S::Ok, S::Error>",
+            "impl demo::Thing",
+            "pub fn demo::Thing::inherent(&self) -> u32",
+        ]);
+        let roster = out.rosters.get("Thing").expect("Thing roster");
+        let names: Vec<&str> = roster.iter().map(String::as_str).collect();
+        assert_eq!(names, ["Clone", "Debug", "serde::ser::Serialize"]);
+        // Trait-impl methods dropped; inherent method kept.
+        assert_eq!(out.items, ["pub fn Thing::inherent(&self) -> u32"]);
+        assert_eq!(out.tally.assoc_fns, 1);
+    }
+
+    #[test]
+    fn auto_traits_count_and_exceptions() {
+        let mut lines = Vec::new();
+        for tr in [
+            "core::marker::Freeze",
+            "core::marker::Send",
+            "core::marker::Sync",
+            "core::marker::Unpin",
+            "core::panic::unwind_safe::RefUnwindSafe",
+            "core::panic::unwind_safe::UnwindSafe",
+        ] {
+            lines.push(format!("impl {tr} for demo::Complete"));
+        }
+        // Partial type: explicit negatives for the unwind traits.
+        for tr in [
+            "core::marker::Freeze",
+            "core::marker::Send",
+            "core::marker::Sync",
+            "core::marker::Unpin",
+        ] {
+            lines.push(format!("impl {tr} for demo::Partial"));
+        }
+        lines.push("impl !core::panic::unwind_safe::RefUnwindSafe for demo::Partial".into());
+        lines.push("impl !core::panic::unwind_safe::UnwindSafe for demo::Partial".into());
+        // Marker noise that must vanish entirely.
+        lines.push("impl core::marker::StructuralPartialEq for demo::Complete".into());
+        let owned: Vec<String> = lines;
+        let out = transform(&owned, "demo");
+        assert_eq!(out.auto_complete_count(), 1);
+        assert_eq!(
+            out.auto_exceptions(),
+            ["Partial: !RefUnwindSafe !UnwindSafe"]
+        );
+        assert!(out.rosters.is_empty());
+    }
+
+    #[test]
+    fn conditional_impls_kept_verbatim() {
+        let out = t(&[
+            "impl<T> core::marker::Send for demo::Wrap<T> where T: core::marker::Send",
+            "impl<T> demo::Trait for demo::Wrap<T> where T: core::clone::Clone",
+        ]);
+        let auto = out.autos.get("Wrap<T>").expect("auto info");
+        assert_eq!(auto.conditional.len(), 1);
+        assert!(!auto_is_complete(auto));
+        assert_eq!(out.conditional_impls.len(), 1);
+        assert!(out.conditional_impls[0].contains("where"));
+    }
+
+    #[test]
+    fn fields_and_variants_survive_trait_member_context() {
+        // A field line directly after a trait impl line must NOT be treated
+        // as an impl member.
+        let out = t(&[
+            "impl core::clone::Clone for demo::Config",
+            "pub demo::Config::level: u8",
+            "pub demo::Kind::VariantA",
+        ]);
+        assert_eq!(out.items.len(), 2);
+        assert_eq!(out.tally.fields, 1);
+        assert_eq!(out.tally.variants, 1);
+    }
+
+    #[test]
+    fn reexport_duplicates_annotated() {
+        let out = t(&[
+            "pub fn demo::compress(&[u8]) -> Vec<u8>",
+            "pub fn demo::deflate::compress(&[u8]) -> Vec<u8>",
+            "pub fn demo::deflate::other(&[u8]) -> Vec<u8>",
+        ]);
+        assert_eq!(
+            out.items,
+            [
+                "pub fn compress(&[u8]) -> Vec<u8> [also: deflate]",
+                "pub fn deflate::other(&[u8]) -> Vec<u8>",
+            ]
+        );
+    }
+
+    #[test]
+    fn members_never_dedupe_across_types() {
+        let out = t(&[
+            "pub fn demo::A::len(&self) -> usize",
+            "pub fn demo::B::len(&self) -> usize",
+        ]);
+        assert_eq!(out.items.len(), 2);
+    }
+
     #[test]
     fn classify_taxonomy() {
-        let lines: Vec<String> = [
-            "pub mod demo",
+        let out = t(&[
             "pub mod demo::util",
             "pub struct demo::util::Thing",
             "pub demo::util::Thing::field: u32",
@@ -744,38 +1403,28 @@ mod tests {
             "pub demo::Kind::VariantA",
             "pub demo::Kind::VariantB(u8)",
             "pub const demo::MAX: usize",
-            "impl core::marker::Send for demo::util::Thing",
-            "impl<'a> core::marker::Sync for demo::Ref<'a>",
-            "impl core::clone::Clone for demo::util::Thing",
             "#[non_exhaustive] pub struct demo::Opts",
-            "pub fn demo::Generic<T>::with(T) -> Self",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-        let (t, mods) = tally_section(&lines);
-        assert_eq!(t.modules, 2);
-        assert_eq!(t.types, 3); // Thing, Kind, Opts
+        ]);
+        let t = &out.tally;
+        assert_eq!(t.modules, 1);
+        assert_eq!(t.types, 3);
         assert_eq!(t.fields, 1);
         assert_eq!(t.variants, 2);
-        assert_eq!(t.free_fns, 2); // helper, root_fn
-        assert_eq!(t.assoc_fns, 2); // Thing::method, Generic::with
+        assert_eq!(t.free_fns, 2);
+        assert_eq!(t.assoc_fns, 1);
         assert_eq!(t.consts, 1);
-        assert_eq!(t.impls_auto, 2); // Send + generic Sync
-        assert_eq!(t.impls_other, 1); // Clone
-        assert_eq!(t.other, 0);
-        // `pub mod demo::util` itself buckets to "(root)" — a module
-        // declaration is owned by its parent; only items *inside* count.
-        assert_eq!(mods.get("util"), Some(&4));
-        assert!(mods.contains_key("(root)"));
+        assert_eq!(out.per_module.get("util"), Some(&4));
+        assert!(out.per_module.contains_key("(root)"));
     }
 
     #[test]
-    fn generic_receiver_is_assoc_fn() {
-        let lines: Vec<String> =
-            vec!["pub fn demo::fetch::Cached<demo::fetch::Shell>::new() -> Self".to_owned()];
-        let (t, _) = tally_section(&lines);
-        assert_eq!(t.assoc_fns, 1);
-        assert_eq!(t.free_fns, 0);
+    fn simplify_trait_paths() {
+        assert_eq!(simplify_trait_path("core::clone::Clone"), "Clone");
+        assert_eq!(simplify_trait_path("core::convert::From<u8>"), "From<u8>");
+        assert_eq!(
+            simplify_trait_path("serde::ser::Serialize"),
+            "serde::ser::Serialize"
+        );
+        assert_eq!(simplify_trait_path("zencodec::Encode"), "zencodec::Encode");
     }
 }
