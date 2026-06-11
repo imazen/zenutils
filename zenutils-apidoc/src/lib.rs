@@ -7,20 +7,33 @@
 //! `public_api_doc.rs` test that previously lived as a drifting copy in
 //! every zen repo.
 //!
+//! # Integration: the CI-free runner package (recommended)
+//!
+//! Consumer workspaces hold this dependency in a tiny `publish = false`
+//! package at `apidoc/` that the real workspace `exclude`s, so plain
+//! `cargo test` — and every CI job, including `--all-features` ones —
+//! never compiles this crate's dependency tree and never runs rustdoc.
+//! Regeneration is a justfile recipe
+//! (`cargo test --manifest-path apidoc/Cargo.toml`), typically chained
+//! into `just fmt`.
+//!
 //! ```no_run
-//! // tests/public_api_doc.rs — the whole file, for most workspaces:
+//! // apidoc/tests/public_api_doc.rs — the whole file, for most workspaces:
 //! #[test]
 //! fn public_api_surface_docs_are_current() {
-//!     zenutils_apidoc::run(); // auto-discovers publishable library members
+//!     zenutils_apidoc::ApiDoc::new()
+//!         .workspace_dir("..") // the real workspace
+//!         .run(); // auto-discovers its publishable library members
 //! }
 //! ```
 //!
-//! Workspaces that need control use the builder:
+//! Workspaces that need control use the rest of the builder:
 //!
 //! ```no_run
 //! #[test]
 //! fn public_api_surface_docs_are_current() {
 //!     zenutils_apidoc::ApiDoc::new()
+//!         .workspace_dir("..")
 //!         .crates(["zenpipe", "zencodecs", "zenfilters"])
 //!         .no_extra_section("zenpipe") // --all-features does not build
 //!         .pinned_features("zencodecs", "jxl-encode,cms")
@@ -28,6 +41,10 @@
 //!         .run();
 //! }
 //! ```
+//!
+//! (An in-workspace `tests/public_api_doc.rs` calling [`run`] also works —
+//! this repo dogfoods that — but it makes every `cargo test` compile this
+//! crate's dependency tree, which consumer CI generally shouldn't pay.)
 //!
 //! # Modes (`ZEN_API_DOC` env var)
 //!
@@ -154,6 +171,7 @@ pub struct ApiDoc {
     overrides: Vec<(String, Extra)>,
     excluded: Vec<(String, Vec<String>)>,
     out_dir: Option<String>,
+    workspace_dir: Option<String>,
 }
 
 impl ApiDoc {
@@ -213,6 +231,30 @@ impl ApiDoc {
         self
     }
 
+    /// Target workspace directory (where its `Cargo.toml` lives), relative
+    /// to the test's working directory. Default: the calling package's own
+    /// workspace.
+    ///
+    /// This is what makes the **CI-free runner package** pattern work: a
+    /// tiny `publish = false` package in an `apidoc/` directory that the
+    /// real workspace `exclude`s, holding the only dependency on this
+    /// crate. Plain `cargo test` (and every CI job, including
+    /// `--all-features` ones) never compiles the apidoc tree or runs
+    /// rustdoc; regeneration happens via
+    /// `cargo test --manifest-path apidoc/Cargo.toml` from a justfile:
+    ///
+    /// ```no_run
+    /// // apidoc/tests/public_api_doc.rs
+    /// #[test]
+    /// fn public_api_surface_docs_are_current() {
+    ///     zenutils_apidoc::ApiDoc::new().workspace_dir("..").run();
+    /// }
+    /// ```
+    pub fn workspace_dir(mut self, dir: &str) -> Self {
+        self.workspace_dir = Some(dir.to_owned());
+        self
+    }
+
     /// Regenerate or check the snapshots, per the `ZEN_API_DOC` mode.
     ///
     /// # Panics
@@ -233,7 +275,7 @@ impl ApiDoc {
             )
         });
 
-        let meta = workspace_metadata();
+        let meta = workspace_metadata(self.workspace_dir.as_deref());
         let workspace_root = PathBuf::from(
             meta["workspace_root"]
                 .as_str()
@@ -289,9 +331,14 @@ impl ApiDoc {
     }
 }
 
-fn workspace_metadata() -> serde_json::Value {
-    let out = Command::new("cargo")
-        .args(["metadata", "--no-deps", "--format-version", "1"])
+fn workspace_metadata(workspace_dir: Option<&str>) -> serde_json::Value {
+    let mut cmd = Command::new("cargo");
+    cmd.args(["metadata", "--no-deps", "--format-version", "1"]);
+    if let Some(dir) = workspace_dir {
+        cmd.arg("--manifest-path")
+            .arg(Path::new(dir).join("Cargo.toml"));
+    }
+    let out = cmd
         .output()
         .unwrap_or_else(|e| panic!("failed to run cargo metadata: {e}"));
     assert!(

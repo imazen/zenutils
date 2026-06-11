@@ -14,25 +14,53 @@ toolchain is used by default, `ZEN_API_DOC_TOOLCHAIN` pins a specific one).
 This crate adds the workspace-wide orchestration and the snapshot format
 shared across zen repos.
 
-## Usage
+## Usage: the CI-free runner package
+
+Hold the dependency in a tiny `publish = false` package at `apidoc/` that
+your workspace `exclude`s — plain `cargo test` and every CI job (including
+`--all-features` ones) then never compile this crate's dependency tree and
+never run rustdoc. Regeneration is a justfile recipe.
 
 ```toml
-[dev-dependencies]
+# apidoc/Cargo.toml
+[package]
+name = "my-workspace-apidoc"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
 zenutils-apidoc = "0.1.0"
 ```
 
 ```rust
-// tests/public_api_doc.rs — the whole file, for most workspaces:
+// apidoc/tests/public_api_doc.rs — the whole file, for most workspaces:
 #[test]
 fn public_api_surface_docs_are_current() {
-    zenutils_apidoc::run();
+    zenutils_apidoc::ApiDoc::new().workspace_dir("..").run();
 }
+```
+
+```text
+# the real workspace Cargo.toml
+[workspace]
+exclude = ["apidoc"]
+```
+
+```just
+api-doc:
+    cargo test --manifest-path apidoc/Cargo.toml
+
+fmt:
+    cargo fmt --all
+    cargo test --manifest-path apidoc/Cargo.toml
 ```
 
 Workspaces that need control:
 
 ```rust
 zenutils_apidoc::ApiDoc::new()
+    .workspace_dir("..")
     .crates(["zenpipe", "zencodecs", "zenfilters"])
     .no_extra_section("zenpipe")                 // --all-features doesn't build
     .pinned_features("zencodecs", "jxl-encode,cms")

@@ -6,21 +6,21 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenutils-apidoc.txt 12 lines (supported surface) | zenutils-apidoc.features.txt 0 added (features: none) | zenutils-apidoc.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+# files: zenutils-apidoc.txt 13 lines (supported surface) | zenutils-apidoc.features.txt 0 added (features: none) | zenutils-apidoc.internal.txt 0 lines (0 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)         1
 #   free functions                              1
-#   inherent methods                            7
+#   inherent methods                            8
 #   trait roster entries (type × trait)         1
 #   auto-trait-complete types                   1
 #
 # per-module pub lines:
-#   (root)                           10
+#   (root)                           11
 
-## items (10 lines)
+## items (11 lines)
 
 pub mod zenutils_apidoc
 pub struct ApiDoc
@@ -31,6 +31,7 @@ pub fn ApiDoc::no_extra_section(self, &str) -> Self
 pub fn ApiDoc::out_dir(self, &str) -> Self
 pub fn ApiDoc::pinned_features(self, &str, &str) -> Self
 pub fn ApiDoc::run(self)
+pub fn ApiDoc::workspace_dir(self, &str) -> Self
 pub fn run()
 
 ## trait impls (1 types)

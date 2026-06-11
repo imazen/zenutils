@@ -36,6 +36,12 @@ All notable changes to crates in this workspace are documented here, following
   --document-hidden-items`; unbuildable excluded/hidden builds degrade to
   a NOTE line. First catch: zensim-regress's `doc(hidden) pub mod layout`,
   1,276 raw lines of previously-invisible hidden API. (094f6cd0)
+- `ApiDoc::workspace_dir` — targets a parent workspace, enabling the
+  recommended **CI-free runner package** integration: a workspace-excluded
+  `apidoc/` package holds the only dependency on this crate, so consumer
+  CI (including `--all-features` jobs) never compiles the apidoc tree and
+  never runs rustdoc; regeneration is `cargo test --manifest-path
+  apidoc/Cargo.toml` from a justfile.
 
 ## zenutils-fuzz
 
