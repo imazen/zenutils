@@ -42,6 +42,15 @@ All notable changes to crates in this workspace are documented here, following
   CI (including `--all-features` jobs) never compiles the apidoc tree and
   never runs rustdoc; regeneration is `cargo test --manifest-path
   apidoc/Cargo.toml` from a justfile.
+- Packaging-invariant check (on by default): every snapshotted crate's
+  `cargo package --list` must be free of snapshot docs/tests and
+  repo-local session files (CLAUDE.md, .workongoing, …) — the org's
+  packaging audits, made self-enforcing. `skip_packaging_check(crate)`
+  opts out; `forbid_in_package([...])` extends the pattern set.
+- `ApiDoc::attribute_features(crate)` — opt-in per-feature attribution:
+  one `## added by feature: X` section per feature (one extra rustdoc
+  build each) plus a `feature interactions` section for lines that only
+  appear when features combine.
 
 ## zenutils-fuzz
 

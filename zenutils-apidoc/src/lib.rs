@@ -172,7 +172,24 @@ pub struct ApiDoc {
     excluded: Vec<(String, Vec<String>)>,
     out_dir: Option<String>,
     workspace_dir: Option<String>,
+    attributed: Vec<String>,
+    skip_packaging: Vec<String>,
+    packaging_forbid_extra: Vec<String>,
 }
+
+/// Substrings that must never appear in `cargo package --list` output for a
+/// publishable crate: snapshot docs and the snapshot test would force
+/// nightly-rustdoc onto downstream test runs, and the rest is repo-local
+/// session tooling. (The org keeps these out via `exclude`/`include` rules;
+/// this check makes the invariant self-enforcing instead of audit-enforced.)
+const PACKAGING_FORBIDDEN: &[&str] = &[
+    "docs/public-api/",
+    "public_api_doc",
+    "CLAUDE.md",
+    ".workongoing",
+    "CONTEXT-HANDOFF.md",
+    "FEEDBACK.md",
+];
 
 impl ApiDoc {
     /// Start with defaults: auto-discover publishable workspace members that
@@ -255,6 +272,38 @@ impl ApiDoc {
         self
     }
 
+    /// Attribute the features file of `crate_name` per feature: one
+    /// `## added by feature: <name>` section per non-excluded feature (one
+    /// extra rustdoc build each), plus a `feature interactions` section for
+    /// lines that only appear when several features combine. Off by default
+    /// because of the build cost; the unattributed combined delta is
+    /// otherwise identical in content.
+    pub fn attribute_features(mut self, crate_name: &str) -> Self {
+        self.attributed.push(crate_name.to_owned());
+        self
+    }
+
+    /// Skip the packaging-invariant check for `crate_name` (e.g. when
+    /// `cargo package` cannot run in this environment). The check otherwise
+    /// asserts that no snapshot docs, snapshot tests, or repo-local session
+    /// files leak into the published package.
+    pub fn skip_packaging_check(mut self, crate_name: &str) -> Self {
+        self.skip_packaging.push(crate_name.to_owned());
+        self
+    }
+
+    /// Additional substrings to forbid in `cargo package --list` output,
+    /// on top of the built-in set (snapshot docs/tests + session files).
+    pub fn forbid_in_package<I, S>(mut self, patterns: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.packaging_forbid_extra
+            .extend(patterns.into_iter().map(Into::into));
+        self
+    }
+
     /// Regenerate or check the snapshots, per the `ZEN_API_DOC` mode.
     ///
     /// # Panics
@@ -306,7 +355,18 @@ impl ApiDoc {
                 .filter(|(name, _)| name == package)
                 .flat_map(|(_, f)| f.iter().cloned())
                 .collect();
-            let files = snapshot_one(&workspace_root, &meta, package, extra, &excluded_cfg);
+            if !self.skip_packaging.iter().any(|c| c == package) {
+                packaging_check(&workspace_root, package, &self.packaging_forbid_extra);
+            }
+            let attribute = self.attributed.iter().any(|c| c == package);
+            let files = snapshot_one(
+                &workspace_root,
+                &meta,
+                package,
+                extra,
+                &excluded_cfg,
+                attribute,
+            );
             for (suffix, doc) in files {
                 let path = out_dir.join(format!("{package}{suffix}"));
                 let existing = std::fs::read_to_string(&path).ok();
@@ -329,6 +389,44 @@ impl ApiDoc {
             }
         }
     }
+}
+
+/// Assert the packaging invariant: no snapshot docs/tests or repo-local
+/// session files in the crate's published package. Runs `cargo package
+/// --list` (fast, no compile). A crate that cannot run `cargo package` at
+/// all fails loudly — use [`ApiDoc::skip_packaging_check`] to opt out.
+fn packaging_check(workspace_root: &Path, package: &str, extra_forbid: &[String]) {
+    let out = Command::new("cargo")
+        .arg("package")
+        .arg("--list")
+        .arg("--allow-dirty")
+        .args(["--package", package])
+        .arg("--manifest-path")
+        .arg(workspace_root.join("Cargo.toml"))
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run cargo package --list: {e}"));
+    assert!(
+        out.status.success(),
+        "cargo package --list failed for {package} (skip with \
+         ApiDoc::skip_packaging_check(\"{package}\")):\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let listing = String::from_utf8_lossy(&out.stdout);
+    let mut violations: Vec<&str> = Vec::new();
+    for line in listing.lines() {
+        if PACKAGING_FORBIDDEN.iter().any(|p| line.contains(p))
+            || extra_forbid.iter().any(|p| line.contains(p.as_str()))
+        {
+            violations.push(line);
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "{package}'s published package would ship repo-local files: \
+         {violations:?} — fix the manifest's include/exclude (whitelist \
+         crates: move the offending file out of the whitelisted globs; see \
+         the tests-dev/ pattern)"
+    );
 }
 
 fn workspace_metadata(workspace_dir: Option<&str>) -> serde_json::Value {
@@ -520,6 +618,7 @@ fn snapshot_one(
     package: &str,
     extra: &Extra,
     excluded_cfg: &[String],
+    attribute: bool,
 ) -> Vec<(&'static str, String)> {
     let crate_ident = package.replace('-', "_");
     let (auto_included, auto_excluded) = split_features(meta, package, excluded_cfg);
@@ -683,6 +782,57 @@ fn snapshot_one(
             for l in &removed {
                 b.push_str(l);
                 b.push('\n');
+            }
+        }
+        // Opt-in per-feature attribution: one extra build per feature, each
+        // delta'd against the default surface; lines that only appear when
+        // features combine land in the interactions section.
+        if attribute && included_feats.len() > 1 {
+            let base_set: HashSet<&str> = base_lines.iter().map(String::as_str).collect();
+            let mut attributed_union: HashSet<String> = HashSet::new();
+            for feat in &included_feats {
+                match try_surface(workspace_root, package, std::slice::from_ref(feat), false) {
+                    Ok(lines) => {
+                        let delta: Vec<String> = lines
+                            .iter()
+                            .filter(|l| !base_set.contains(l.as_str()))
+                            .map(|l| strip_crate_prefix(l, &crate_ident))
+                            .collect();
+                        attributed_union.extend(delta.iter().cloned());
+                        let _ = write!(
+                            b,
+                            "\n## added by feature: {feat} ({} lines)\n\n",
+                            delta.len()
+                        );
+                        for l in &delta {
+                            b.push_str(l);
+                            b.push('\n');
+                        }
+                    }
+                    Err(e) => {
+                        let _ = writeln!(
+                            b,
+                            "\nNOTE: feature {feat} not buildable alone: {}",
+                            e.lines().next().unwrap_or("unknown error")
+                        );
+                    }
+                }
+            }
+            let interactions: Vec<String> = feat_added
+                .iter()
+                .map(|l| strip_crate_prefix(l, &crate_ident))
+                .filter(|l| !attributed_union.contains(l))
+                .collect();
+            if !interactions.is_empty() {
+                let _ = write!(
+                    b,
+                    "\n## feature interactions (lines requiring several features) ({} lines)\n\n",
+                    interactions.len()
+                );
+                for l in &interactions {
+                    b.push_str(l);
+                    b.push('\n');
+                }
             }
         }
     }
