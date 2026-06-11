@@ -1,5 +1,5 @@
 [workspace]
-members = ["zenutils-fuzz"]
+members = ["zenutils-apidoc", "zenutils-fuzz"]
 resolver = "3"
 
 [workspace.package]

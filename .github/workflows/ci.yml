@@ -102,3 +102,17 @@ jobs:
 
       - name: Check MSRV
         run: cargo hack check --workspace --rust-version
+
+  api-doc:
+    name: Public API snapshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly # rustdoc JSON for public-api
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check committed API snapshots are current
+        run: cargo test -p zenutils-apidoc --test public_api_doc
+        env:
+          ZEN_API_DOC: check

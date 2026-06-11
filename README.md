@@ -6,6 +6,7 @@ consumer pulls them from one versioned source rather than ad-hoc path deps.
 
 | Crate | Description |
 |-------|-------------|
+| [`zenutils-apidoc`](zenutils-apidoc/) | Public-API snapshot tests: workspace-wide committed surface docs with taxonomy summaries and feature deltas. |
 | [`zenutils-fuzz`](zenutils-fuzz/) | Fuzz-regression seed-corpus runner (`RegressionSuite`). |
 
 ## License
