@@ -16,6 +16,20 @@ All notable changes to crates in this workspace are documented here, following
   snapshot header records the baseline; the features file stays a delta
   vs it.
 
+#### Fixed
+- All cargo invocations now pass `name@version` package-id specs (resolved
+  from the workspace metadata), so crates whose own registry-published
+  version is also in the resolve graph — e.g. a dev-dependency depending on
+  the published release of the crate being documented — no longer fail with
+  "specification is ambiguous" (zenquant via zengif was the motivating
+  case). rustdoc JSON filenames now come from the lib target name, honoring
+  `[lib] name` overrides, and the target dir from cargo metadata.
+
+#### Changed
+- Dropped the `rustdoc-json` dependency: every build in the matrix now goes
+  through the same directly-spawned `cargo rustdoc` path the hidden-items
+  build already used (verified byte-identical snapshots on this workspace).
+
 ### [0.1.0] - 2026-06-11
 
 #### Added

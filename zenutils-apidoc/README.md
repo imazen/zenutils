@@ -5,14 +5,14 @@ committed `docs/public-api/` surface docs for every publishable library
 crate, so API changes always show up as a git diff next to the code change
 that caused them — and the surface size stays one glance away.
 
-Built on [`public-api`](https://lib.rs/crates/public-api) and
-[`rustdoc-json`](https://lib.rs/crates/rustdoc-json) — the well-maintained
-libraries behind `cargo public-api` — plus
+Built on [`public-api`](https://lib.rs/crates/public-api) — the
+well-maintained library behind `cargo public-api` — plus
 [`rustup-toolchain`](https://lib.rs/crates/rustup-toolchain) for automatic
 nightly install (rustdoc JSON requires nightly; the tracking `nightly`
 toolchain is used by default, `ZEN_API_DOC_TOOLCHAIN` pins a specific one).
-This crate adds the workspace-wide orchestration and the snapshot format
-shared across zen repos.
+This crate adds the rustdoc JSON builds (spawned `cargo rustdoc` with
+disambiguated `name@version` package specs), the workspace-wide
+orchestration, and the snapshot format shared across zen repos.
 
 ## Usage: the CI-free runner package
 

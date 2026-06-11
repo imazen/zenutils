@@ -368,7 +368,12 @@ impl ApiDoc {
                 .flat_map(|(_, f)| f.iter().cloned())
                 .collect();
             if !self.skip_packaging.iter().any(|c| c == package) {
-                packaging_check(&workspace_root, package, &self.packaging_forbid_extra);
+                packaging_check(
+                    &workspace_root,
+                    package,
+                    &pkg_ref(&meta, package).spec,
+                    &self.packaging_forbid_extra,
+                );
             }
             let attribute = self.attributed.iter().any(|c| c == package);
             let base_feats: Vec<String> = self
@@ -414,12 +419,12 @@ impl ApiDoc {
 /// session files in the crate's published package. Runs `cargo package
 /// --list` (fast, no compile). A crate that cannot run `cargo package` at
 /// all fails loudly — use [`ApiDoc::skip_packaging_check`] to opt out.
-fn packaging_check(workspace_root: &Path, package: &str, extra_forbid: &[String]) {
+fn packaging_check(workspace_root: &Path, package: &str, spec: &str, extra_forbid: &[String]) {
     let out = Command::new("cargo")
         .arg("package")
         .arg("--list")
         .arg("--allow-dirty")
-        .args(["--package", package])
+        .args(["--package", spec])
         .arg("--manifest-path")
         .arg(workspace_root.join("Cargo.toml"))
         .output()
@@ -522,32 +527,67 @@ fn split_features(
     (included, excluded)
 }
 
-/// Build rustdoc JSON for `package` with the given features and render the
+/// Cargo-facing identity for one snapshotted crate, resolved once from the
+/// `--no-deps` workspace metadata.
+///
+/// `spec` is the `name@version` package-id spec used for every cargo
+/// invocation: a bare name is ambiguous whenever the crate's own
+/// registry-published version is also in the resolve graph (e.g. a
+/// dev-dependency that depends on the published release of the very crate
+/// being documented — zenquant via zengif was the motivating case).
+/// `json_name` is rustdoc's output filename stem: the lib/proc-macro target
+/// name with `-` mapped to `_`, which honors `[lib] name` overrides instead
+/// of assuming it matches the package name.
+struct PkgRef {
+    spec: String,
+    json_name: String,
+    target_dir: PathBuf,
+}
+
+fn pkg_ref(meta: &serde_json::Value, package: &str) -> PkgRef {
+    let pkg = meta["packages"]
+        .as_array()
+        .expect("packages array")
+        .iter()
+        .find(|p| p["name"] == package)
+        .unwrap_or_else(|| panic!("{package} not in workspace metadata"));
+    let version = pkg["version"].as_str().expect("package version");
+    let lib_target = pkg["targets"]
+        .as_array()
+        .expect("targets array")
+        .iter()
+        .find(|t| {
+            t["kind"].as_array().is_some_and(|kinds| {
+                kinds
+                    .iter()
+                    .any(|k| matches!(k.as_str(), Some("lib" | "rlib" | "proc-macro")))
+            })
+        })
+        .and_then(|t| t["name"].as_str())
+        .unwrap_or(package);
+    PkgRef {
+        spec: format!("{package}@{version}"),
+        json_name: lib_target.replace('-', "_"),
+        target_dir: PathBuf::from(
+            meta["target_directory"]
+                .as_str()
+                .expect("target_directory in cargo metadata"),
+        ),
+    }
+}
+
+/// Build rustdoc JSON for the crate with the given features and render the
 /// public API lines (sorted, blanket impls omitted). With `hidden`,
-/// `#[doc(hidden)]` items are documented too (via a directly-spawned
-/// `cargo rustdoc` carrying `--document-hidden-items`, which the
-/// `rustdoc-json` builder does not expose).
+/// `#[doc(hidden)]` items are documented too. All builds go through one
+/// directly-spawned `cargo rustdoc` so the disambiguated `--package` spec
+/// and the nightly-only `--document-hidden-items` flag are both available.
 fn try_surface(
     workspace_root: &Path,
-    package: &str,
+    pkg: &PkgRef,
     features: &[String],
     hidden: bool,
 ) -> Result<Vec<String>, String> {
-    let json_path = if hidden {
-        build_hidden_json(workspace_root, package, features)?
-    } else {
-        let mut builder = rustdoc_json::Builder::default()
-            .toolchain(toolchain())
-            .manifest_path(workspace_root.join("Cargo.toml"))
-            .package(package)
-            .quiet(true);
-        if !features.is_empty() {
-            builder = builder.features(features);
-        }
-        builder
-            .build()
-            .map_err(|e| format!("rustdoc JSON build failed: {e}"))?
-    };
+    let json_path = build_json(workspace_root, pkg, features, hidden)?;
     let api = public_api::Builder::from_rustdoc_json(json_path)
         .omit_blanket_impls(true)
         .sorted(true)
@@ -564,20 +604,22 @@ fn try_surface(
     Ok(api.items().map(|item| item.to_string()).collect())
 }
 
-/// `cargo rustdoc` invocation mirroring `rustdoc_json::Builder`'s, plus the
-/// nightly-only `--document-hidden-items`. Run AFTER the normal builds of
-/// the same crate — it overwrites `target/doc/<lib>.json`, which the caller
-/// parses immediately.
-fn build_hidden_json(
+/// One `cargo rustdoc` for every build in the matrix. The JSON lands at
+/// `<target-dir>/doc/<json_name>.json` (overwritten per build — the caller
+/// parses it immediately). `--cap-lints allow` keeps deny-warnings
+/// environments from failing surface extraction; lint gating belongs to the
+/// regular CI jobs, not the snapshot.
+fn build_json(
     workspace_root: &Path,
-    package: &str,
+    pkg: &PkgRef,
     features: &[String],
+    hidden: bool,
 ) -> Result<PathBuf, String> {
     let mut cmd = Command::new("rustup");
     cmd.args(["run", &toolchain(), "cargo", "rustdoc"])
         .arg("--manifest-path")
         .arg(workspace_root.join("Cargo.toml"))
-        .args(["--package", package, "--lib", "--quiet"]);
+        .args(["--package", &pkg.spec, "--lib", "--quiet"]);
     if !features.is_empty() {
         cmd.args(["--features", &features.join(",")]);
     }
@@ -587,42 +629,40 @@ fn build_hidden_json(
         "unstable-options",
         "--output-format",
         "json",
-        "--document-hidden-items",
         "--cap-lints",
         "allow",
     ]);
+    if hidden {
+        cmd.arg("--document-hidden-items");
+    }
     let out = cmd
         .output()
         .map_err(|e| format!("failed to spawn cargo rustdoc: {e}"))?;
     if !out.status.success() {
         return Err(format!(
-            "hidden-items rustdoc build failed: {}",
+            "rustdoc JSON build failed: {}",
             String::from_utf8_lossy(&out.stderr)
                 .lines()
                 .find(|l| l.contains("error"))
                 .unwrap_or("see rustdoc output")
         ));
     }
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| workspace_root.join("target"));
-    let path = target_dir
+    let path = pkg
+        .target_dir
         .join("doc")
-        .join(format!("{}.json", package.replace('-', "_")));
+        .join(format!("{}.json", pkg.json_name));
     if !path.exists() {
-        return Err(format!(
-            "hidden-items rustdoc JSON not found at {}",
-            path.display()
-        ));
+        return Err(format!("rustdoc JSON not found at {}", path.display()));
     }
     Ok(path)
 }
 
-fn surface(workspace_root: &Path, package: &str, features: &[String], hidden: bool) -> Vec<String> {
-    try_surface(workspace_root, package, features, hidden).unwrap_or_else(|e| {
+fn surface(workspace_root: &Path, pkg: &PkgRef, features: &[String], hidden: bool) -> Vec<String> {
+    try_surface(workspace_root, pkg, features, hidden).unwrap_or_else(|e| {
         panic!(
-            "{e} for {package} (features {features:?}); \
-             set ZEN_API_DOC=off to skip the public-API snapshot test"
+            "{e} for {} (features {features:?}); \
+             set ZEN_API_DOC=off to skip the public-API snapshot test",
+            pkg.spec
         )
     })
 }
@@ -641,6 +681,7 @@ fn snapshot_one(
     base_feats: &[String],
 ) -> Vec<(&'static str, String)> {
     let crate_ident = package.replace('-', "_");
+    let pkg = pkg_ref(meta, package);
     let (auto_included, auto_excluded) = split_features(meta, package, excluded_cfg);
 
     let (feature_label, included_feats) = match extra {
@@ -656,7 +697,7 @@ fn snapshot_one(
     // Build matrix. The default + included builds are load-bearing (panic on
     // failure); the excluded / hidden builds degrade to a note in the
     // internal file (excluded feature unions are allowed to be unbuildable).
-    let base_lines = surface(workspace_root, package, base_feats, false);
+    let base_lines = surface(workspace_root, &pkg, base_feats, false);
 
     // The included build is a superset of the baseline by construction.
     let mut included_feats = included_feats;
@@ -668,7 +709,7 @@ fn snapshot_one(
     let included_lines = if included_feats == base_feats {
         base_lines.clone()
     } else {
-        surface(workspace_root, package, &included_feats, false)
+        surface(workspace_root, &pkg, &included_feats, false)
     };
 
     let mut notes: Vec<String> = Vec::new();
@@ -678,7 +719,7 @@ fn snapshot_one(
     let excluded_lines = if excluded_feats.is_empty() {
         included_lines.clone()
     } else {
-        match try_surface(workspace_root, package, &with_excluded_feats, false) {
+        match try_surface(workspace_root, &pkg, &with_excluded_feats, false) {
             Ok(lines) => lines,
             Err(e) => {
                 notes.push(format!(
@@ -697,7 +738,7 @@ fn snapshot_one(
     } else {
         &included_feats
     };
-    let hidden_lines = match try_surface(workspace_root, package, hidden_base, true) {
+    let hidden_lines = match try_surface(workspace_root, &pkg, hidden_base, true) {
         Ok(lines) => lines,
         Err(e) => {
             notes.push(format!(
@@ -825,7 +866,7 @@ fn snapshot_one(
             let base_set: HashSet<&str> = base_lines.iter().map(String::as_str).collect();
             let mut attributed_union: HashSet<String> = HashSet::new();
             for feat in &included_feats {
-                match try_surface(workspace_root, package, std::slice::from_ref(feat), false) {
+                match try_surface(workspace_root, &pkg, std::slice::from_ref(feat), false) {
                     Ok(lines) => {
                         let delta: Vec<String> = lines
                             .iter()
@@ -1505,6 +1546,29 @@ mod tests {
     fn t(lines: &[&str]) -> Transformed {
         let owned: Vec<String> = lines.iter().map(|s| (*s).to_owned()).collect();
         transform(&owned, "demo")
+    }
+
+    #[test]
+    fn pkg_ref_disambiguates_spec_and_honors_lib_name_override() {
+        let meta: serde_json::Value = serde_json::json!({
+            "target_directory": "/ws/target",
+            "packages": [{
+                "name": "my-crate",
+                "version": "0.1.2",
+                "targets": [
+                    {"name": "my-crate-cli", "kind": ["bin"]},
+                    {"name": "custom-lib-name", "kind": ["lib"]},
+                ],
+            }],
+        });
+        let pkg = pkg_ref(&meta, "my-crate");
+        // `name@version` spec stays unambiguous even when the registry
+        // release of the same crate is in the resolve graph.
+        assert_eq!(pkg.spec, "my-crate@0.1.2");
+        // rustdoc's JSON filename comes from the lib target name (which a
+        // `[lib] name` override can change), not the package name.
+        assert_eq!(pkg.json_name, "custom_lib_name");
+        assert_eq!(pkg.target_dir, PathBuf::from("/ws/target"));
     }
 
     #[test]
