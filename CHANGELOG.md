@@ -7,6 +7,15 @@ All notable changes to crates in this workspace are documented here, following
 
 ### [Unreleased]
 
+### [0.1.1] - 2026-06-11
+
+#### Added
+- `ApiDoc::base_features(crate, csv)` — baseline features for the
+  supported-surface build, for crates whose plain default features do not
+  compile (e.g. heic's backend-selection `compile_error!` gate). The
+  snapshot header records the baseline; the features file stays a delta
+  vs it.
+
 ### [0.1.0] - 2026-06-11
 
 #### Added

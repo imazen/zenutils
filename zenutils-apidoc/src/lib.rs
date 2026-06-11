@@ -175,6 +175,7 @@ pub struct ApiDoc {
     attributed: Vec<String>,
     skip_packaging: Vec<String>,
     packaging_forbid_extra: Vec<String>,
+    base: Vec<(String, String)>,
 }
 
 /// Substrings that must never appear in `cargo package --list` output for a
@@ -283,6 +284,17 @@ impl ApiDoc {
         self
     }
 
+    /// Baseline `--features` csv for `crate_name`'s SUPPORTED-surface build
+    /// (the `<crate>.txt` file), for crates whose plain default features do
+    /// not compile — e.g. a backend-selection `compile_error!` gate. The
+    /// snapshot header records the baseline. The features file stays a
+    /// delta vs this baseline.
+    pub fn base_features(mut self, crate_name: &str, features_csv: &str) -> Self {
+        self.base
+            .push((crate_name.to_owned(), features_csv.to_owned()));
+        self
+    }
+
     /// Skip the packaging-invariant check for `crate_name` (e.g. when
     /// `cargo package` cannot run in this environment). The check otherwise
     /// asserts that no snapshot docs, snapshot tests, or repo-local session
@@ -359,6 +371,12 @@ impl ApiDoc {
                 packaging_check(&workspace_root, package, &self.packaging_forbid_extra);
             }
             let attribute = self.attributed.iter().any(|c| c == package);
+            let base_feats: Vec<String> = self
+                .base
+                .iter()
+                .find(|(name, _)| name == package)
+                .map(|(_, csv)| csv.split(',').map(str::to_owned).collect())
+                .unwrap_or_default();
             let files = snapshot_one(
                 &workspace_root,
                 &meta,
@@ -366,6 +384,7 @@ impl ApiDoc {
                 extra,
                 &excluded_cfg,
                 attribute,
+                &base_feats,
             );
             for (suffix, doc) in files {
                 let path = out_dir.join(format!("{package}{suffix}"));
@@ -619,6 +638,7 @@ fn snapshot_one(
     extra: &Extra,
     excluded_cfg: &[String],
     attribute: bool,
+    base_feats: &[String],
 ) -> Vec<(&'static str, String)> {
     let crate_ident = package.replace('-', "_");
     let (auto_included, auto_excluded) = split_features(meta, package, excluded_cfg);
@@ -636,9 +656,16 @@ fn snapshot_one(
     // Build matrix. The default + included builds are load-bearing (panic on
     // failure); the excluded / hidden builds degrade to a note in the
     // internal file (excluded feature unions are allowed to be unbuildable).
-    let base_lines = surface(workspace_root, package, &[], false);
+    let base_lines = surface(workspace_root, package, base_feats, false);
 
-    let included_lines = if included_feats.is_empty() {
+    // The included build is a superset of the baseline by construction.
+    let mut included_feats = included_feats;
+    for f in base_feats {
+        if !included_feats.contains(f) {
+            included_feats.push(f.clone());
+        }
+    }
+    let included_lines = if included_feats == base_feats {
         base_lines.clone()
     } else {
         surface(workspace_root, package, &included_feats, false)
@@ -751,7 +778,14 @@ fn snapshot_one(
     let mut out = Vec::new();
 
     // --- <crate>.txt : supported surface ---
-    let mut a = format!("# {package} public API — supported surface (default features)\n");
+    let mut a = if base_feats.is_empty() {
+        format!("# {package} public API — supported surface (default features)\n")
+    } else {
+        format!(
+            "# {package} public API — supported surface (default features + {})\n",
+            base_feats.join(",")
+        )
+    };
     a.push_str(header_common);
     a.push_str(&overview);
     a.push('\n');

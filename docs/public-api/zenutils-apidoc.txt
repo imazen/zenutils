@@ -6,25 +6,26 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenutils-apidoc.txt 16 lines (supported surface) | zenutils-apidoc.features.txt 0 added (features: none) | zenutils-apidoc.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+# files: zenutils-apidoc.txt 17 lines (supported surface) | zenutils-apidoc.features.txt 0 added (features: none) | zenutils-apidoc.internal.txt 0 lines (0 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 1
 #   pub types (struct/enum/trait/alias)         1
 #   free functions                              1
-#   inherent methods                           11
+#   inherent methods                           12
 #   trait roster entries (type × trait)         1
 #   auto-trait-complete types                   1
 #
 # per-module pub lines:
-#   (root)                           14
+#   (root)                           15
 
-## items (14 lines)
+## items (15 lines)
 
 pub mod zenutils_apidoc
 pub struct ApiDoc
 pub fn ApiDoc::attribute_features(self, &str) -> Self
+pub fn ApiDoc::base_features(self, &str, &str) -> Self
 pub fn ApiDoc::crates<I, S>(self, I) -> Self where I: core::iter::traits::collect::IntoIterator<Item = S>, S: core::convert::Into<alloc::string::String>
 pub fn ApiDoc::exclude_features<I, S>(self, &str, I) -> Self where I: core::iter::traits::collect::IntoIterator<Item = S>, S: core::convert::Into<alloc::string::String>
 pub fn ApiDoc::forbid_in_package<I, S>(self, I) -> Self where I: core::iter::traits::collect::IntoIterator<Item = S>, S: core::convert::Into<alloc::string::String>
