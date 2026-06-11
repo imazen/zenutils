@@ -1,9 +1,9 @@
 # zenutils-apidoc
 
 Public-API snapshot tests for whole workspaces: one `cargo test` regenerates
-committed `docs/public-api/<crate>.txt` surface docs for every publishable
-library crate, so API changes always show up as a git diff next to the code
-change that caused them.
+committed `docs/public-api/` surface docs for every publishable library
+crate, so API changes always show up as a git diff next to the code change
+that caused them — and the surface size stays one glance away.
 
 Built on [`public-api`](https://lib.rs/crates/public-api) and
 [`rustdoc-json`](https://lib.rs/crates/rustdoc-json) — the well-maintained
@@ -36,6 +36,7 @@ zenutils_apidoc::ApiDoc::new()
     .crates(["zenpipe", "zencodecs", "zenfilters"])
     .no_extra_section("zenpipe")                 // --all-features doesn't build
     .pinned_features("zencodecs", "jxl-encode,cms")
+    .exclude_features("zenfilters", ["experimental"]) // documented, not headlined
     .run();
 ```
 
@@ -49,14 +50,31 @@ zenutils_apidoc::ApiDoc::new()
 | `regen` | force regenerate |
 | `off` | skip |
 
-## Snapshot format
+## Snapshot format: three disjoint files per crate
 
-Each `<crate>.txt` carries a generated `## summary` taxonomy (free functions
-vs methods vs fields/variants vs auto-trait/derived impl lines, plus a
-per-module table), the full default-features surface, and a **delta-only**
-non-default-features section. Auto-trait impl lines are kept on purpose:
-losing `Send`/`Sync` on a public type is a semver break and must show in the
-diff. Blanket impls are omitted.
+- **`<crate>.txt`** — the supported surface: default features, hidden items
+  excluded. What a consumer who types `cargo add <crate>` gets.
+- **`<crate>.features.txt`** — additions from non-excluded, non-`_*`
+  features (delta vs the default surface).
+- **`<crate>.internal.txt`** — `#[doc(hidden)]` items plus the surface of
+  EXCLUDED features (`_*`-prefixed, or named via `exclude_features` —
+  exclusion without the semver break of renaming a feature).
+
+No line appears in more than one file. Within each file:
+
+- a generated `## summary` taxonomy (free functions vs inherent methods vs
+  fields/variants, plus a per-module table) keeps the headline honest;
+- the crate-name path prefix is stripped from every line;
+- **trait impls collapse to one roster line per type**
+  (`Type: Clone, Debug, Display, Error`) — method signatures live at the
+  trait definition, so per-impl bodies are dropped; inherent methods stay;
+- **auto traits** collapse to a count of fully-`Send`/`Sync`/… types plus
+  explicit `Type: !Send !Sync` exception lines — a type losing `Send` moves
+  into the exceptions list, so the semver diff guard survives with ~95%
+  fewer lines (conditional `where`-bearing impls are preserved verbatim);
+- blanket impls are omitted (compiler-guaranteed, zero semver signal);
+- re-export duplicates are annotated `[also: other::path]` instead of
+  listed twice.
 
 ## License
 

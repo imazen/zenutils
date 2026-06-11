@@ -9,6 +9,9 @@ repository.workspace = true
 readme = "README.md"
 keywords = ["public-api", "snapshot", "testing", "rustdoc-json", "api-surface"]
 categories = ["development-tools::testing"]
+# The dogfood snapshot test would make downstream/distro `cargo test` runs
+# require rustup + nightly rustdoc; consumers write their own 3-line shim.
+exclude = ["tests/"]
 
 [dependencies]
 public-api = "0.52.1"

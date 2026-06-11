@@ -52,6 +52,11 @@ jobs:
 
       - name: Test (i686)
         run: cross test --workspace --target i686-unknown-linux-gnu
+        env:
+          # The cross container has no rustup and doesn't inherit
+          # GITHUB_ACTIONS, so the snapshot test's CI guard can't fire —
+          # skip it explicitly (the transform unit tests still run).
+          CROSS_CONTAINER_OPTS: "--env ZEN_API_DOC=off"
 
   wasm:
     name: WASM check
