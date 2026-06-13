@@ -105,6 +105,8 @@
 //! is deliberately not used: in public-api 0.52.1 it lags the crate's own
 //! `rustdoc-types` requirement and produces unparsable format-55 JSON.)
 
+#![forbid(unsafe_code)]
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
