@@ -7,6 +7,16 @@ All notable changes to crates in this workspace are documented here, following
 
 ### [Unreleased]
 
+#### Docs
+- README now states three previously-implied, load-bearing behaviors found in
+  an insulated external-developer usability test: (1) snapshots are written to
+  `docs/public-api/` under the *target workspace's* root (cargo metadata
+  `workspace_root`), not relative to the runner package's cwd; (2) `.run()`
+  without `.crates([...])` auto-discovers every publishable library member
+  (the minimal example is complete, not a stub); (3) the CI gate needs
+  `ZEN_API_DOC=check` exported explicitly — unset under `GITHUB_ACTIONS` is a
+  silent skip, so a check job that forgets the env var passes without checking.
+
 ### [0.1.1] - 2026-06-11
 
 #### Added
