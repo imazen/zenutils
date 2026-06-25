@@ -7,6 +7,21 @@ All notable changes to crates in this workspace are documented here, following
 
 ### [Unreleased]
 
+#### Added
+- `ApiDoc::no_file_meta_header()` and `ApiDoc::no_autotraits_summary()` —
+  two opt-in builder gates that suppress lines in the rendered snapshots
+  which churn on every regen without carrying semver signal. The first
+  drops the `# files: <crate>.txt N lines | <crate>.features.txt N added
+  | <crate>.internal.txt N lines (X hidden + Y excluded-feature)` header
+  block (its line-count counters shift every time the API surface grows
+  by a few lines). The second drops the `X types implement all of:
+  Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe` summary line at
+  the top of the `## auto traits` block (its counter changes whenever any
+  type is added or removed); explicit `Type: !Trait …` exception lines
+  stay — those are the actual semver signal. Both default OFF, so
+  existing consumers see byte-identical snapshots; use is opt-in via
+  `ApiDoc::new().no_file_meta_header().no_autotraits_summary().run()`.
+
 #### Docs
 - README now states three previously-implied, load-bearing behaviors found in
   an insulated external-developer usability test: (1) snapshots are written to

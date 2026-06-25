@@ -178,6 +178,20 @@ pub struct ApiDoc {
     skip_packaging: Vec<String>,
     packaging_forbid_extra: Vec<String>,
     base: Vec<(String, String)>,
+    no_file_meta_header: bool,
+    no_autotraits_summary: bool,
+}
+
+/// Writer-side gates threaded through `snapshot_one` → `transform`/`render_body`
+/// to suppress lines that churn on every regen without changing the API surface.
+#[derive(Clone, Copy, Default)]
+struct WriterConfig {
+    /// Suppress the `# files: <crate>.txt N lines | …` header line.
+    no_file_meta_header: bool,
+    /// Suppress the `X types implement all of: Freeze, RefUnwindSafe, …`
+    /// summary line at the top of the auto-traits block (the explicit
+    /// `Type: !Trait …` exception lines stay — those carry real semver signal).
+    no_autotraits_summary: bool,
 }
 
 /// Substrings that must never appear in `cargo package --list` output for a
@@ -297,6 +311,27 @@ impl ApiDoc {
         self
     }
 
+    /// Suppress the `# files: <crate>.txt N lines (supported surface) | …`
+    /// header line on every snapshot file. Off by default. Useful when
+    /// committing snapshots: that line's line-count counters shift on every
+    /// regen as the API grows, producing perpetual diff noise that conveys
+    /// no semver signal (the per-section `## items (N lines)` / `## trait
+    /// impls (N types)` headings inside each file already give a count).
+    pub fn no_file_meta_header(mut self) -> Self {
+        self.no_file_meta_header = true;
+        self
+    }
+
+    /// Suppress the `X types implement all of: Freeze, RefUnwindSafe, …`
+    /// summary line at the top of the `## auto traits` block. Off by
+    /// default. The explicit `Type: !Trait …` exception lines stay — those
+    /// are the actual semver signal; only the changes-on-every-new-type
+    /// counter line is removed.
+    pub fn no_autotraits_summary(mut self) -> Self {
+        self.no_autotraits_summary = true;
+        self
+    }
+
     /// Skip the packaging-invariant check for `crate_name` (e.g. when
     /// `cargo package` cannot run in this environment). The check otherwise
     /// asserts that no snapshot docs, snapshot tests, or repo-local session
@@ -328,6 +363,10 @@ impl ApiDoc {
             Mode::Off => return,
             Mode::Check => true,
             Mode::Regen => false,
+        };
+        let writer_config = WriterConfig {
+            no_file_meta_header: self.no_file_meta_header,
+            no_autotraits_summary: self.no_autotraits_summary,
         };
 
         let toolchain = toolchain();
@@ -392,6 +431,7 @@ impl ApiDoc {
                 &excluded_cfg,
                 attribute,
                 &base_feats,
+                writer_config,
             );
             for (suffix, doc) in files {
                 let path = out_dir.join(format!("{package}{suffix}"));
@@ -681,6 +721,7 @@ fn snapshot_one(
     excluded_cfg: &[String],
     attribute: bool,
     base_feats: &[String],
+    writer_config: WriterConfig,
 ) -> Vec<(&'static str, String)> {
     let crate_ident = package.replace('-', "_");
     let pkg = pkg_ref(meta, package);
@@ -777,8 +818,8 @@ fn snapshot_one(
         .cloned()
         .collect();
 
-    let main = transform(&base_lines, &crate_ident);
-    let features = transform(&feat_added, &crate_ident);
+    let main = transform(&base_lines, &crate_ident, writer_config);
+    let features = transform(&feat_added, &crate_ident, writer_config);
     let removed: Vec<String> = feat_removed
         .iter()
         .map(|l| strip_crate_prefix(l, &crate_ident))
@@ -792,7 +833,7 @@ fn snapshot_one(
         .iter()
         .filter(|l| !excl_added_set.contains(l.as_str()))
         .count();
-    let internal = transform(&internal_lines, &crate_ident);
+    let internal = transform(&internal_lines, &crate_ident, writer_config);
 
     let header_common = "# (regenerated on every `cargo test` by zenutils-apidoc; \
          ZEN_API_DOC=check verifies, =off skips).\n\
@@ -830,7 +871,9 @@ fn snapshot_one(
         )
     };
     a.push_str(header_common);
-    a.push_str(&overview);
+    if !writer_config.no_file_meta_header {
+        a.push_str(&overview);
+    }
     a.push('\n');
     a.push_str(&main.render_summary());
     a.push_str(&main.render_body());
@@ -1004,6 +1047,9 @@ struct Transformed {
     autos: BTreeMap<String, AutoInfo>,
     tally: Tally,
     per_module: BTreeMap<String, usize>,
+    /// Writer-side gates (`no_file_meta_header`, `no_autotraits_summary`).
+    /// Affects `total_lines` and `render_body` only.
+    writer_config: WriterConfig,
 }
 
 impl Transformed {
@@ -1033,7 +1079,8 @@ impl Transformed {
         let auto_lines = if self.autos.is_empty() {
             0
         } else {
-            1 + self.auto_exceptions().len()
+            let summary = usize::from(!self.writer_config.no_autotraits_summary);
+            summary + self.auto_exceptions().len()
         };
         self.items.len() + self.rosters.len() + self.conditional_impls.len() + auto_lines
     }
@@ -1101,16 +1148,23 @@ impl Transformed {
         }
         if !self.autos.is_empty() {
             let exceptions = self.auto_exceptions();
-            let _ = write!(s, "\n## auto traits\n\n");
-            let _ = writeln!(
-                s,
-                "{} types implement all of: {}",
-                self.auto_complete_count(),
-                AUTO_TRAITS.join(", ")
-            );
-            for l in &exceptions {
-                s.push_str(l);
-                s.push('\n');
+            // With the summary suppressed (`no_autotraits_summary`) AND no
+            // exceptions, the whole `## auto traits` block carries no signal
+            // — drop it entirely instead of leaving an empty heading.
+            if !(self.writer_config.no_autotraits_summary && exceptions.is_empty()) {
+                let _ = write!(s, "\n## auto traits\n\n");
+                if !self.writer_config.no_autotraits_summary {
+                    let _ = writeln!(
+                        s,
+                        "{} types implement all of: {}",
+                        self.auto_complete_count(),
+                        AUTO_TRAITS.join(", ")
+                    );
+                }
+                for l in &exceptions {
+                    s.push_str(l);
+                    s.push('\n');
+                }
             }
         }
         s
@@ -1180,13 +1234,16 @@ fn parse_impl_body(body: &str) -> ImplKind<'_> {
 }
 
 /// The full transformation pipeline for one disjoint line set.
-fn transform(lines: &[String], crate_ident: &str) -> Transformed {
+fn transform(lines: &[String], crate_ident: &str, writer_config: WriterConfig) -> Transformed {
     let stripped: Vec<String> = lines
         .iter()
         .map(|l| strip_crate_prefix(l, crate_ident))
         .collect();
 
-    let mut t = Transformed::default();
+    let mut t = Transformed {
+        writer_config,
+        ..Transformed::default()
+    };
     // Trait-impl member attribution: members directly follow their impl line
     // in public-api's sorted output (verified empirically); track the type
     // whose trait-impl members should be dropped.
@@ -1547,7 +1604,7 @@ mod tests {
 
     fn t(lines: &[&str]) -> Transformed {
         let owned: Vec<String> = lines.iter().map(|s| (*s).to_owned()).collect();
-        transform(&owned, "demo")
+        transform(&owned, "demo", WriterConfig::default())
     }
 
     #[test]
@@ -1626,7 +1683,7 @@ mod tests {
         // Marker noise that must vanish entirely.
         lines.push("impl core::marker::StructuralPartialEq for demo::Complete".into());
         let owned: Vec<String> = lines;
-        let out = transform(&owned, "demo");
+        let out = transform(&owned, "demo", WriterConfig::default());
         assert_eq!(out.auto_complete_count(), 1);
         assert_eq!(
             out.auto_exceptions(),
@@ -1723,5 +1780,118 @@ mod tests {
             "serde::ser::Serialize"
         );
         assert_eq!(simplify_trait_path("zencodec::Encode"), "zencodec::Encode");
+    }
+
+    /// Input shared by the no_autotraits_summary tests: one complete type +
+    /// one partial type so the `## auto traits` block has both a count line
+    /// AND an exception line under the default config.
+    fn autotraits_sample() -> Vec<String> {
+        let mut lines = Vec::new();
+        for tr in [
+            "core::marker::Freeze",
+            "core::marker::Send",
+            "core::marker::Sync",
+            "core::marker::Unpin",
+            "core::panic::unwind_safe::RefUnwindSafe",
+            "core::panic::unwind_safe::UnwindSafe",
+        ] {
+            lines.push(format!("impl {tr} for demo::Complete"));
+        }
+        for tr in [
+            "core::marker::Freeze",
+            "core::marker::Send",
+            "core::marker::Sync",
+            "core::marker::Unpin",
+        ] {
+            lines.push(format!("impl {tr} for demo::Partial"));
+        }
+        lines.push("impl !core::panic::unwind_safe::RefUnwindSafe for demo::Partial".into());
+        lines.push("impl !core::panic::unwind_safe::UnwindSafe for demo::Partial".into());
+        lines
+    }
+
+    #[test]
+    fn no_autotraits_summary_drops_only_the_count_line() {
+        let owned = autotraits_sample();
+
+        // Default config: render the full block (count line + exceptions).
+        let default_out = transform(&owned, "demo", WriterConfig::default());
+        let default_body = default_out.render_body();
+        assert!(
+            default_body
+                .contains("1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe"),
+            "default config should emit the autotraits summary line; got:\n{default_body}"
+        );
+        assert!(
+            default_body.contains("Partial: !RefUnwindSafe !UnwindSafe"),
+            "default config should emit the exception line; got:\n{default_body}"
+        );
+        assert!(default_body.contains("## auto traits"));
+
+        // Suppressed: heading + exception stays, only the counter line is gone.
+        let suppressed_out = transform(
+            &owned,
+            "demo",
+            WriterConfig {
+                no_autotraits_summary: true,
+                ..WriterConfig::default()
+            },
+        );
+        let suppressed_body = suppressed_out.render_body();
+        assert!(
+            !suppressed_body.contains("implement all of"),
+            "no_autotraits_summary should drop the count line; got:\n{suppressed_body}"
+        );
+        assert!(
+            suppressed_body.contains("Partial: !RefUnwindSafe !UnwindSafe"),
+            "no_autotraits_summary must keep the exception lines; got:\n{suppressed_body}"
+        );
+        assert!(
+            suppressed_body.contains("## auto traits"),
+            "the `## auto traits` heading should stay when an exception line is present"
+        );
+
+        // total_lines reflects the suppression.
+        assert_eq!(
+            default_out.total_lines(),
+            suppressed_out.total_lines() + 1,
+            "suppressing the counter line should drop exactly one line from total_lines"
+        );
+
+        // With no exceptions AND the summary suppressed, the whole block goes
+        // away — no empty heading left behind.
+        let complete_only: Vec<String> = autotraits_sample()
+            .into_iter()
+            .filter(|l| !l.contains("Partial"))
+            .collect();
+        let suppressed_complete = transform(
+            &complete_only,
+            "demo",
+            WriterConfig {
+                no_autotraits_summary: true,
+                ..WriterConfig::default()
+            },
+        );
+        let body = suppressed_complete.render_body();
+        assert!(
+            !body.contains("## auto traits"),
+            "with no exceptions and the summary suppressed the whole block should be dropped; got:\n{body}"
+        );
+    }
+
+    #[test]
+    fn no_file_meta_header_default_is_off() {
+        // Pure back-compat smoke check: the ApiDoc builder defaults leave both
+        // gates off, so `WriterConfig` derived from it suppresses nothing.
+        let api = ApiDoc::new();
+        assert!(!api.no_file_meta_header);
+        assert!(!api.no_autotraits_summary);
+
+        // The builders flip the corresponding fields.
+        let api = ApiDoc::new()
+            .no_file_meta_header()
+            .no_autotraits_summary();
+        assert!(api.no_file_meta_header);
+        assert!(api.no_autotraits_summary);
     }
 }
