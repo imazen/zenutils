@@ -97,14 +97,19 @@ zenutils/scripts/render-crosslink-footer.sh --self <crate> >> README.md
 zenutils/scripts/render-crosslink-footer.sh --self <crate> | zenutils/scripts/splice-footer.sh README.md
 ```
 
-`--self <crate>` bolds the current crate (no self-link) and omits its own
-link-def. The footer links to **repos** (`github.com/imazen/<repo>`) — repo links
-behave identically on both surfaces and aren't circular on crates.io. When the
-family gains or loses a crate, edit `docs/zen-crates.tsv` and re-render all
-footers. See `docs/crosslink-footer.md` for the current rendered block.
+It renders an `## Image tech I maintain` section: a two-column table grouping the
+image crates (Codecs / Codec internals / Compression / Processing / Pixels &
+color / Pipeline & framework / Metrics / Pickers & ML) plus a Products row
+(Imageflow / Imageflow Server / ImageResizer), a `### General Rust awesomeness`
+line for the tools, and profile links. `--self <crate>` bolds the current crate
+(no self-link) and omits its own link-def. The footer links to **repos**
+(`github.com/imazen/<repo>`) — repo links behave identically on both surfaces and
+aren't circular on crates.io. When the family gains or loses a crate, edit
+`docs/zen-crates.tsv` and re-render every footer. See `docs/crosslink-footer.md`
+for the current rendered block.
 
 Hub crates (`zencodec`, `zencodecs`, `zenpipe`) may additionally carry a
-descriptive table; the inline footer is still required.
+format-specific table higher up; the rendered footer is still required.
 
 ---
 
@@ -135,7 +140,7 @@ descriptive table; the inline footer is still required.
 ## License
 <SPDX or dual-license note>
 
-## The zen* image toolkit    <- rendered footer (always last)
+## Image tech I maintain    <- rendered footer (always last)
 ```
 
 ---

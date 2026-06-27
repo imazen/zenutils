@@ -15,7 +15,7 @@ F="${1:?usage: splice-footer.sh README.md  (footer on stdin)}"
 NEW=$(cat)
 TMP="$F.splice.tmp"
 
-MARK=$(grep -n '^## The zen\* image toolkit' "$F" | head -1 | cut -d: -f1 || true)
+MARK=$(grep -n '^## Image tech I maintain' "$F" | head -1 | cut -d: -f1 || true)
 if [ -n "${MARK:-}" ]; then
   head -n $((MARK-1)) "$F" | awk 'BEGIN{} {lines[NR]=$0} END{n=NR; while(n>0 && lines[n]~/^[[:space:]]*(---)?[[:space:]]*$/) n--; for(i=1;i<=n;i++) print lines[i]}' > "$TMP"
   printf '\n%s\n' "$NEW" >> "$TMP"

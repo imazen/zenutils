@@ -16,7 +16,9 @@ All notable changes to crates in this workspace are documented here, following
   driving the crosslink footer.
 - `scripts/render-crosslink-footer.sh`, `scripts/gen-readme-crates.sh`,
   `scripts/splice-footer.sh` — render the footer from the registry, generate the
-  trimmed crates.io README from README.md, and splice footers in place.
+  trimmed crates.io README from README.md, and splice footers in place. The footer
+  is the rich "Image tech I maintain" table (grouped image crates + Imageflow /
+  ImageResizer products + a tools line + profile links), self-aware via `--self`.
 
 ## zenutils-apidoc
 
