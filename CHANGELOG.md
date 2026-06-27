@@ -3,6 +3,21 @@
 All notable changes to crates in this workspace are documented here, following
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Workspace
+
+### [Unreleased]
+
+#### Added
+- `docs/readme-conventions.md` — single source of truth for zen* README/onboarding
+  conventions: split README.md (GitHub, full badges) + generated README.crates.md
+  (crates.io, CI badge only), the crosslink-footer standard, the one-shot
+  onboarding-function convention, and the fair-benchmark repro/chart standard.
+- `docs/zen-crates.tsv` — canonical zen* family registry (name/group/repo/one-liner)
+  driving the crosslink footer.
+- `scripts/render-crosslink-footer.sh`, `scripts/gen-readme-crates.sh`,
+  `scripts/splice-footer.sh` — render the footer from the registry, generate the
+  trimmed crates.io README from README.md, and splice footers in place.
+
 ## zenutils-apidoc
 
 ### [Unreleased]

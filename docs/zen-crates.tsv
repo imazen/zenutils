@@ -1,0 +1,62 @@
+# zen* image toolkit — canonical crate registry
+# Source of truth for the README crosslink footer. Edit here, then regenerate
+# every crate's footer with scripts/render-crosslink-footer.sh.
+# Columns: name <TAB> group <TAB> repo <TAB> one-liner
+# Groups (render order): codecs internals compression process color framework metrics ml tools
+# Only zen-native published crates appear here (upstream forks fax/tiff/weezl/rawloader/
+# cavif/aom-decoder-rs/mozjpeg-rs are intentionally excluded — we don't inject our
+# conventions into forks we don't own).
+zenjpeg	codecs	https://github.com/imazen/zenjpeg	Pure-Rust JPEG encoder/decoder with perceptual optimization
+zenpng	codecs	https://github.com/imazen/zenpng	PNG codec with zenflate compression and palette quantization
+zenwebp	codecs	https://github.com/imazen/zenwebp	Pure-Rust WebP, lossy and lossless, with SIMD
+zengif	codecs	https://github.com/imazen/zengif	Zero-trust GIF codec with streaming and animation
+zenavif	codecs	https://github.com/imazen/zenavif	AVIF codec built on rav1d-safe and zenravif
+zenjxl	codecs	https://github.com/imazen/zenjxl	JPEG XL encode + decode with zencodec traits
+zenbitmaps	codecs	https://github.com/imazen/zenbitmaps	PNM/PAM/PFM, BMP, farbfeld, QOI, TGA, Radiance HDR
+heic	codecs	https://github.com/imazen/heic	Pure-Rust HEIC/HEIF decoder with SIMD
+zentiff	codecs	https://github.com/imazen/zentiff	TIFF decode/encode with zenpixels integration
+zenpdf	codecs	https://github.com/imazen/zenpdf	PDF page renderer via the hayro engine
+zensvg	codecs	https://github.com/imazen/zenextras	SVG render + lossless optimization (in zenextras)
+zenjp2	codecs	https://github.com/imazen/zenextras	JPEG 2000 decoder via hayro (in zenextras)
+zenraw	codecs	https://github.com/imazen/zenraw	Camera RAW/DNG decoder, linear f32 output
+ultrahdr	codecs	https://github.com/imazen/ultrahdr	Ultra HDR (JPEG + gain map) math, metadata, tone mapping
+zenjxl-decoder	internals	https://github.com/imazen/zenjxl-decoder	Pure-Rust JPEG XL decoder with multi-arch SIMD
+jxl-encoder	internals	https://github.com/imazen/jxl-encoder	Pure-Rust JPEG XL encoder (modular + VarDCT)
+zenrav1e	internals	https://github.com/imazen/zenrav1e	AV1 still/animated image encoder (rav1e fork)
+rav1d-safe	internals	https://github.com/imazen/rav1d-safe	Safe SIMD AV1 decoder (rav1d fork, no C FFI)
+zenavif-parse	internals	https://github.com/imazen/zenavif-parse	Zero-copy AVIF/ISOBMFF container parser
+zenavif-serialize	internals	https://github.com/imazen/zenavif-serialize	AVIF container serializer (HEIF/MIAF muxer)
+zenflate	compression	https://github.com/imazen/zenflate	Pure-Rust DEFLATE/zlib/gzip, streaming + parallel
+zenzop	compression	https://github.com/imazen/zenzop	Faster Zopfli fork with ECT-derived optimizations
+zenzstd	compression	https://github.com/imazen/zenzstd	Pure-Rust Zstandard, forbid(unsafe), no_std+alloc
+zenresize	process	https://github.com/imazen/zenresize	Resampling with 31 filters, streaming, SIMD
+zenquant	process	https://github.com/imazen/zenquant	Perceptual palette quantizer in OKLab
+zenblend	process	https://github.com/imazen/zenblend	Porter-Duff + artistic blends on premultiplied linear f32
+zenfilters	process	https://github.com/imazen/zenfilters	Photo adjustments on planar Oklab f32 with SIMD
+zensally	process	https://github.com/imazen/zensally	Face detection + saliency maps for smart cropping
+zentone	process	https://github.com/imazen/zentone	HDR→SDR tone-mapping curves + gain-map splitter
+zenpixels	color	https://github.com/imazen/zenpixels	Pixel format/descriptor/buffer interchange types
+zenpixels-convert	color	https://github.com/imazen/zenpixels	Transfer-aware pixel conversion + gamut mapping
+linear-srgb	color	https://github.com/imazen/linear-srgb	Fast linear↔sRGB conversion (f32/f64/u8/u16) with SIMD
+garb	color	https://github.com/imazen/garb	SIMD pixel format conversions (swizzle, depth, layout)
+zenpipe	framework	https://github.com/imazen/zenpipe	Streaming pull-based pixel pipeline, zero materialization
+zencodec	framework	https://github.com/imazen/zencodec	Shared encode/decode traits, metadata, resource limits
+zencodecs	framework	https://github.com/imazen/zencodecs	Unified format detection + codec dispatch registry
+zenlayout	framework	https://github.com/imazen/zenlayout	Resize/crop geometry with constraint modes + orientation
+zennode	framework	https://github.com/imazen/zennode	Self-documenting node graph definitions
+zenwasm	framework	https://github.com/imazen/zenwasm	WASM module hosting (wasmtime cdylib + host loader)
+zentract	framework	https://github.com/imazen/zentract	ONNX inference plugin system (tract-onnx via dlopen)
+zensim	metrics	https://github.com/imazen/zensim	Fast psychovisual image similarity in XYB
+fast-ssim2	metrics	https://github.com/imazen/fast-ssim2	Fast SSIMULACRA2 with SIMD
+butteraugli	metrics	https://github.com/imazen/butteraugli	Butteraugli perceptual image difference
+zenmetrics	metrics	https://github.com/imazen/zenmetrics	GPU metric crates + zen-metrics CLI + zenfleet job system
+resamplescope-rs	metrics	https://github.com/imazen/resamplescope-rs	Resampling filter analysis + visualization
+zenanalyze	ml	https://github.com/imazen/zenanalyze	Image-feature extraction for adaptive codec decisions
+zenpredict	ml	https://github.com/imazen/zenanalyze	Zero-copy MLP runtime + ZNPR model parser
+zenpicker	ml	https://github.com/imazen/zenanalyze	Codec-family meta-picker over zenpredict
+zenbench	tools	https://github.com/imazen/zenbench	Interleaved microbenchmarking with paired statistics
+archmage	tools	https://github.com/imazen/archmage	Safe SIMD dispatch via CPU capability tokens
+magetypes	tools	https://github.com/imazen/archmage	Shared SIMD primitive types for archmage
+enough	tools	https://github.com/imazen/enough	Cooperative cancellation tokens
+whereat	tools	https://github.com/lilith/whereat	Lightweight error-location tracking, no_std
+cargo-copter	tools	https://github.com/imazen/cargo-copter	Test reverse-deps against multiple crate versions
