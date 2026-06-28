@@ -59,6 +59,17 @@ Why CI-only on crates.io: the crates.io page already shows version, license,
 downloads, repository, and the docs.rs link in its sidebar. The one signal it
 does **not** surface is build health, so CI is the only badge worth repeating.
 
+Packaging gotchas (check before changing `Cargo.toml`):
+
+- If `[package]` has an `include = [...]` whitelist, replace `"/README.md"` with
+  `"/README.crates.md"` so the registry README actually ships. If it uses
+  `exclude` instead (or neither), nothing to change — both READMEs ship and the
+  `readme` field picks which one crates.io renders.
+- **If `lib.rs` does `include_str!("../README.md")`** (common for README doctests
+  or `#![doc = include_str!(...)]`), README.md must stay in the published tarball
+  — keep it in `include` (add `README.crates.md` alongside it; don't replace).
+  Removing it breaks the docs.rs build.
+
 ---
 
 ## 2. Badges
@@ -211,9 +222,13 @@ zenbench output modes to use:
 | Want | Mode |
 |------|------|
 | sorted throughput bar chart in the terminal | zenbench CLI (`sort_by_speed`) |
-| self-contained SVG report | `--format=html` |
-| violin / PDF / regression plots (distribution & variance) | plotters.rs HTML report |
+| self-contained SVG report | `--format=html` (`to_html()`) |
+| standalone SVG charts | `charts` feature (charts-rs) |
+| embeddable chart image URLs | `quickchart` module |
 | paired A/B delta with CI | zenbench's paired-difference stats |
+
+(zenbench does not produce violin/PDF/regression plots itself — for those, export the
+raw per-call samples and plot them with your tool of choice.)
 
 ---
 
