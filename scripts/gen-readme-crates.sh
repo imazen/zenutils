@@ -4,13 +4,14 @@
 # so the split never drifts: you edit README.md; README.crates.md is regenerated.
 #
 # Transform:
-#   1. H1 badge row -> keep ONLY the CI badge. crates.io already shows version,
-#      license, downloads, repo, and the docs.rs link in its sidebar; the one
-#      thing it does NOT show is CI status, so that is the single badge worth
-#      keeping. (lib.rs / docs.rs / license / msrv badges are dropped.)
+#   1. H1 badge row -> strip ALL badges, keep just `# crate-name`. A crates.io
+#      README is locked to the specific published version the reader is viewing,
+#      but CI / crates.io-version / lib.rs / docs.rs badges all reflect HEAD /
+#      latest — they are misleading on a version-pinned page. So crates.io gets
+#      no badges; the GitHub README keeps the full row (GitHub is always HEAD).
 #   2. Drop any block between `<!-- crates.io:skip-start -->` and
 #      `<!-- crates.io:skip-end -->` (use it for heavy benchmark tables, large
-#      images, or anything that renders poorly / wastes space on crates.io).
+#      images, or anything HEAD-specific / that renders poorly on crates.io).
 #   3. Prepend a "generated — do not edit" banner.
 # Everything else (intro, quick-start, usage, crosslink footer, License) passes
 # through verbatim — note links/images in the kept sections MUST be absolute,
@@ -31,10 +32,7 @@ OUT="$DIR/README.crates.md"
     !hdr && /^# / {
       hdr=1
       p=index($0, " [![")
-      namepart = (p>0) ? substr($0,1,p-1) : $0
-      ci=""
-      if (match($0, /\[!\[[Cc][Ii]\]\([^)]*\)\]\([^)]*\)/)) ci=substr($0,RSTART,RLENGTH)
-      print (ci!="") ? namepart " " ci : namepart
+      print (p>0) ? substr($0,1,p-1) : $0
       next
     }
     /<!-- *crates\.io:skip-start *-->/ { skip=1; next }

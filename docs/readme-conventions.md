@@ -23,7 +23,7 @@ Each crate keeps **two** READMEs:
 | File | Surface | Badges | Heavy content |
 |------|---------|--------|---------------|
 | `README.md` | GitHub repo home | full badge row | benchmarks, images, deep usage |
-| `README.crates.md` | crates.io (`readme = "README.crates.md"`) | **CI badge only** | trimmed |
+| `README.crates.md` | crates.io (`readme = "README.crates.md"`) | **none** | trimmed |
 
 `README.crates.md` is **generated** from `README.md` — never hand-edited — so the
 split can't drift:
@@ -55,9 +55,16 @@ Two rules make the generator deterministic:
    targets 404 there. Use `https://github.com/imazen/<crate>/blob/main/...` or
    `https://docs.rs/<crate>`.
 
-Why CI-only on crates.io: the crates.io page already shows version, license,
-downloads, repository, and the docs.rs link in its sidebar. The one signal it
-does **not** surface is build health, so CI is the only badge worth repeating.
+Why no badges on crates.io: a crates.io README is **locked to the specific
+published version** the reader is viewing, but every badge (CI, crates.io
+version, lib.rs, docs.rs) reflects HEAD / latest — so on a version-pinned page
+they are at best redundant (version/license/docs already sit in the sidebar) and
+at worst misleading (the CI badge for an old version shows a newer commit's
+status). Anything not locked to the version being read doesn't belong there. The
+GitHub README keeps the full badge row because GitHub always renders HEAD, which
+is exactly what those badges describe. Same logic applies to HEAD-only nav (e.g.
+a "latest docs site" link) — wrap it in `crates.io:skip` if it would mislead on a
+pinned page.
 
 Packaging gotchas (check before changing `Cargo.toml`):
 
@@ -89,8 +96,8 @@ Optional extras, after `license`, only if the crate actually has them: MSRV
 (`https://img.shields.io/badge/MSRV-<ver>-blue?style=flat-square`) and codecov
 (`https://img.shields.io/codecov/c/github/imazen/<repo>?style=flat-square`).
 
-**crates.io `README.crates.md` — CI badge only** (produced automatically by the
-generator; nothing to hand-write).
+**crates.io `README.crates.md` — no badges at all** (the generator strips the
+whole badge row, leaving just `# crate-name`; nothing to hand-write).
 
 Custom-license crates (e.g. AGPL/commercial dual) use a badge label that states
 it, e.g. `https://img.shields.io/badge/license-AGPL--3.0%20%2F%20Commercial-blue?style=flat-square`.
