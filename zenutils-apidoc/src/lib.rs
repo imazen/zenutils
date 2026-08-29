@@ -426,11 +426,13 @@ impl ApiDoc {
             let files = snapshot_one(
                 &workspace_root,
                 &meta,
-                package,
-                extra,
-                &excluded_cfg,
-                attribute,
-                &base_feats,
+                PackageSnapshotSpec {
+                    package,
+                    extra,
+                    excluded_cfg: &excluded_cfg,
+                    attribute,
+                    base_feats: &base_feats,
+                },
                 writer_config,
             );
             for (suffix, doc) in files {
@@ -713,16 +715,31 @@ const FILE_MAIN: &str = ".txt";
 const FILE_FEATURES: &str = ".features.txt";
 const FILE_INTERNAL: &str = ".internal.txt";
 
+/// Per-package inputs to [`snapshot_one`], bundled so the signature stays
+/// under clippy's argument limit (the ambient `workspace_root` / `meta` /
+/// `writer_config` apply to every package; these five do not).
+#[derive(Clone, Copy)]
+struct PackageSnapshotSpec<'a> {
+    package: &'a str,
+    extra: &'a Extra,
+    excluded_cfg: &'a [String],
+    attribute: bool,
+    base_feats: &'a [String],
+}
+
 fn snapshot_one(
     workspace_root: &Path,
     meta: &serde_json::Value,
-    package: &str,
-    extra: &Extra,
-    excluded_cfg: &[String],
-    attribute: bool,
-    base_feats: &[String],
+    spec: PackageSnapshotSpec<'_>,
     writer_config: WriterConfig,
 ) -> Vec<(&'static str, String)> {
+    let PackageSnapshotSpec {
+        package,
+        extra,
+        excluded_cfg,
+        attribute,
+        base_feats,
+    } = spec;
     let crate_ident = package.replace('-', "_");
     let pkg = pkg_ref(meta, package);
     let (auto_included, auto_excluded) = split_features(meta, package, excluded_cfg);
@@ -1818,8 +1835,9 @@ mod tests {
         let default_out = transform(&owned, "demo", WriterConfig::default());
         let default_body = default_out.render_body();
         assert!(
-            default_body
-                .contains("1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe"),
+            default_body.contains(
+                "1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe"
+            ),
             "default config should emit the autotraits summary line; got:\n{default_body}"
         );
         assert!(
@@ -1888,9 +1906,7 @@ mod tests {
         assert!(!api.no_autotraits_summary);
 
         // The builders flip the corresponding fields.
-        let api = ApiDoc::new()
-            .no_file_meta_header()
-            .no_autotraits_summary();
+        let api = ApiDoc::new().no_file_meta_header().no_autotraits_summary();
         assert!(api.no_file_meta_header);
         assert!(api.no_autotraits_summary);
     }
