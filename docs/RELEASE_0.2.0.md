@@ -103,13 +103,25 @@ Packaged file list is exactly `.cargo_vcs_info.json`, `Cargo.lock`,
 snapshot docs, no tests. Re-verified on a pristine `git archive origin/main`
 export so the result does not depend on `--allow-dirty`.
 
-**CI is green on the release commit.** Run
-[33258142056](https://github.com/imazen/zenutils/actions/runs/33258142056) on
-`27d5d21`: 12/12 jobs success — ubuntu-latest, ubuntu-24.04-arm, macos-latest,
-macos-26-intel, windows-latest, windows-11-arm, i686 (`cross`), WASM check,
-Clippy, Format, MSRV, Public API snapshots. Step 2 of the sequence below is
-therefore already satisfied for this commit; re-check if anything lands on
-`main` before you tag.
+**CI is green on every commit of this release prep** — 12/12 jobs each
+(ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-26-intel, windows-latest,
+windows-11-arm, i686 via `cross`, WASM check, Clippy, Format, MSRV, Public API
+snapshots):
+
+| commit | what it carries | run |
+|---|---|---|
+| `27d5d21` | version bump, `[0.2.0]` CHANGELOG, this doc | [33258142056](https://github.com/imazen/zenutils/actions/runs/33258142056) |
+| `b2f06fa` | CI + clean-export dry-run record | [33258324524](https://github.com/imazen/zenutils/actions/runs/33258324524) |
+| `608fa8a` | measured consumer counts | [33258834480](https://github.com/imazen/zenutils/actions/runs/33258834480) |
+| `42e96af` | mutation-gate record | [33258924279](https://github.com/imazen/zenutils/actions/runs/33258924279) |
+
+Step 2 of the sequence below is therefore satisfied for any of these four.
+`main` has since moved to `2716984` (an unrelated `ci.yml` concurrency fix from
+concurrent work — it makes pushes to `main` cancel their superseded runs, which
+they previously never did because `github.head_ref` is empty outside
+`pull_request`). That commit changes no crate source, but it is the tip, so
+confirm its own run is green before tagging it rather than one of the four
+above.
 
 ## Release sequence
 
