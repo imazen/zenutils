@@ -15,26 +15,29 @@ All notable changes to crates in this workspace are documented here, following
   per-package inputs into a private `PackageSnapshotSpec`, not by an `allow`),
   and **Public API snapshots** (`docs/public-api/zenutils-apidoc.txt` never got
   regenerated after `no_file_meta_header` / `no_autotraits_summary` landed in
-  8a5a290).
+  8a5a290). (a632731)
 
 #### Added
 - `docs/readme-conventions.md` — single source of truth for zen* README/onboarding
   conventions: split README.md (GitHub, full badges) + generated README.crates.md
   (crates.io, CI badge only), the crosslink-footer standard, the one-shot
   onboarding-function convention, and the fair-benchmark repro/chart standard.
+  (f1114bd, 6350138, 82a050b, 1921bc2)
 - `docs/zen-crates.tsv` — canonical zen* family registry (name/group/repo/one-liner)
-  driving the crosslink footer.
+  driving the crosslink footer. (f1114bd)
 - `scripts/mutate-fuzz-guards.py` — mutation-verifies the `zenutils-fuzz` seed
   expectation guards. Reverts each guard, one at a time, to the permissive
   behaviour it replaced, runs the suite, and reports which tests noticed; a
   mutation nothing catches is an unprotected guard. `RegressionSuite` exists to
   refuse vacuous passes, so its own guards silently rotting into no-ops is the
   exact failure it is supposed to prevent. Currently 9 mutations, all caught.
+  (5f1933f)
 - `scripts/render-crosslink-footer.sh`, `scripts/gen-readme-crates.sh`,
   `scripts/splice-footer.sh` — render the footer from the registry, generate the
   trimmed crates.io README from README.md, and splice footers in place. The footer
   is the rich "Image tech I maintain" table (grouped image crates + Imageflow /
   ImageResizer products + a tools line + profile links), self-aware via `--self`.
+  (f1114bd, 6350138, 1921bc2)
 
 ## zenutils-apidoc
 
@@ -137,12 +140,18 @@ All notable changes to crates in this workspace are documented here, following
 
 ### [Unreleased]
 
-#### QUEUED BREAKING CHANGES
-<!-- Ship together as 0.2.0. Requires user approval for the leading-digit bump
-     (0.1 -> 0.2 is the semver-incompatible component for a 0.x crate).
-     Cargo will NOT auto-upgrade the ten `zenutils-fuzz = "0.1.0"` consumers
-     across the workspace: a 0.x minor bump is treated as incompatible, so each
-     repo moves only when it deliberately bumps the dep. -->
+Nothing yet.
+
+### [0.2.0] - unreleased
+
+Breaking release. `0.1` -> `0.2` is the semver-incompatible component for a 0.x
+crate, approved 2026-08-29 for the mandatory-seed-expectation change below.
+Cargo does **not** auto-upgrade the ten `zenutils-fuzz = "0.1.0"` consumers
+across the workspace — a 0.x minor bump is treated as incompatible, so each repo
+moves only when it deliberately bumps the dep. Release checklist:
+`docs/RELEASE_0.2.0.md`.
+
+#### Breaking
 - `RegressionSuite::run` no longer treats an undeclared seed expectation as a
   silent pass. Every suite must now declare either `.min_seeds(n)` or
   `.allow_empty_corpus()`; a suite that declares neither panics with a message
@@ -152,14 +161,44 @@ All notable changes to crates in this workspace are documented here, following
   clean run were indistinguishable, and every observed instance of the former
   reported green (zenjxl-decoder's wasm legs replayed zero seeds for the whole
   life of its harness, because WASI refuses to traverse the literal `..` in
-  its seed path). (`RegressionReport` docs carry the full case.)
+  its seed path). (`RegressionReport` docs carry the full case.) (038c201)
 - `RegressionSuite::run` returns `RegressionReport` instead of `()`.
   Deliberately NOT `#[must_use]`, so existing `suite.run();` statements keep
-  compiling unchanged under `-D warnings`.
+  compiling unchanged under `-D warnings`. A tail-position call in a `-> ()`
+  function (`fn f() { suite.run() }`, no semicolon) does break, with E0308.
+  (038c201)
 - A seed directory that exists but cannot be scanned (unreadable, or a path
   that is not a directory) is now a panic under every expectation, including
   `.allow_empty_corpus()`. It was previously indistinguishable from an empty
   corpus. This is what makes the WASI `..` case fail loudly instead of green.
+  (038c201)
+
+#### Semver-checks result
+
+`cargo semver-checks --package zenutils-fuzz --baseline-root <extracted
+zenutils-fuzz-0.1.0.crate> --release-type patch` (v0.49.0) reports **223 checks,
+223 pass, 30 skip — "no semver update required"**. That is a false negative, and
+the bump is justified anyway. Two reasons, both verified rather than argued:
+
+- **The behavioural breaks are invisible to the tool.** A call that used to
+  return now panics; cargo-semver-checks compares type signatures, not
+  behaviour, so nothing in its lint set can see the mandatory-expectation
+  change or the unreadable-directory change. These are the *reason* for the
+  release and they will never show up in a semver-checks run.
+- **The return-type break falls in a genuine lint-coverage gap.**
+  cargo-semver-checks 0.49.0 ships `exported_function_return_value_added`
+  (free functions), `trait_method_return_value_added` (unsealed trait methods)
+  and `pub_api_sealed_trait_method_return_value_added` — all major — but has no
+  `inherent_method_return_value_added`. `RegressionSuite::run` is an inherent
+  method going `()` -> `RegressionReport`, which is exactly the uncovered case.
+  (The reverse direction, `inherent_method_now_returns_unit`, *is* covered.)
+  Confirmed by compiling the same two-function consumer against the published
+  0.1.0 and against this tree: `suite.run();` in statement position builds on
+  both, and `fn f(..) { suite.run() }` in tail position builds on 0.1.0 and
+  fails on 0.2.0 with `error[E0308]: expected (), found RegressionReport`.
+
+So the honest summary is: **zero tool-detected breaks, three real ones.** Do not
+read the green semver-checks run as a licence to ship this as 0.1.1.
 
 #### Added
 - `RegressionSuite::min_seeds(n)` — the seed directory must exist, be readable,
@@ -168,22 +207,29 @@ All notable changes to crates in this workspace are documented here, following
   have different causes and different fixes. `n` counts what the suite actually
   replays (dotfiles, `*.md` and `*.txt` are already filtered out), so a
   `README.md` in the corpus directory cannot inflate it — the mistake most
-  hand-rolled seed counters in the workspace make.
+  hand-rolled seed counters in the workspace make. (038c201)
 - `RegressionSuite::allow_empty_corpus()` — explicit opt-in to the permissive
   behaviour, for a crate that genuinely has no corpus yet. Tolerates an absent
-  or empty directory; still fails on an unreadable one.
+  or empty directory; still fails on an unreadable one. (038c201)
 - `RegressionSuite::min_seeds(0)` — distinct from `allow_empty_corpus()`: the
   directory must exist, but may hold no seeds. For a deliberately-empty corpus
   (zenflate's one open repro needs a ~19 MB input, gated by a unit test
-  instead) whose directory must not silently disappear.
+  instead) whose directory must not silently disappear. (038c201)
 - `RegressionReport`, returned by `run()`: `seeds_replayed()`, `targets()`,
   `invocations()`, `seed_paths()`, `seed_dir()`, plus `Display` and `Debug`.
   Callers no longer have to re-implement the seed filter to count the corpus —
   twelve repos had grown a hand-rolled counter, eight of them a byte-identical
-  copy of the same 25-line helper.
+  copy of the same 25-line helper. (038c201)
 - 9 further unit tests (15 total) covering the undeclared/absent/unreadable/
   empty/short cases, report counts, expectation ordering, and the
-  `README.md`-counted-as-a-seed trap.
+  `README.md`-counted-as-a-seed trap. (038c201)
+
+#### Docs
+- README gained the seed-expectation table (five corpus states x four
+  expectations), the zenjxl-decoder WASI case that motivated the change, and
+  the `min_seeds(0)` vs `allow_empty_corpus()` distinction. The old one-line
+  "a missing or empty seed dir is a no-op" is gone — it described behaviour
+  that no longer exists. (038c201)
 
 ### [0.1.0] - 2026-05-27
 

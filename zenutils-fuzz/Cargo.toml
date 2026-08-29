@@ -1,6 +1,6 @@
 [package]
 name = "zenutils-fuzz"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fuzz-regression seed-corpus runner (RegressionSuite) shared across zen codec crates."
 edition.workspace = true
 rust-version.workspace = true
