@@ -115,13 +115,25 @@ snapshots):
 | `608fa8a` | measured consumer counts | [33258834480](https://github.com/imazen/zenutils/actions/runs/33258834480) |
 | `42e96af` | mutation-gate record | [33258924279](https://github.com/imazen/zenutils/actions/runs/33258924279) |
 
-Step 2 of the sequence below is therefore satisfied for any of these four.
-`main` has since moved to `2716984` (an unrelated `ci.yml` concurrency fix from
-concurrent work — it makes pushes to `main` cancel their superseded runs, which
-they previously never did because `github.head_ref` is empty outside
-`pull_request`). That commit changes no crate source, but it is the tip, so
-confirm its own run is green before tagging it rather than one of the four
-above.
+Step 2 of the sequence below is satisfied for each of those four **at the commit
+named**, and that is the only thing this table proves. `main` has moved past
+them twice since, so do not read the table as a statement about the current tip
+— re-derive the tip's own evidence before tagging.
+
+**Two of the commits since carry a lesson worth keeping.** `2716984` landed a
+`ci.yml` concurrency fix (pushes to `main` now cancel their superseded runs,
+which they previously never did, because `github.head_ref` is empty outside
+`pull_request`). Its own run — [33259183584](https://github.com/imazen/zenutils/actions/runs/33259183584)
+— was then **cancelled** by exactly the mechanism it introduced, when the next
+push superseded it. That is correct behaviour, not a fault, but it means a
+cancelled run is now a normal outcome on this repo and **a cancelled run is not
+evidence of anything**: it is an absence of a verdict, not a weak verdict.
+`b72303d` afterwards ran green ([33263140750](https://github.com/imazen/zenutils/actions/runs/33263140750)),
+and the current tip's run is the one to check.
+
+Neither of those commits, nor the two lockfile/CHANGELOG commits after them,
+changes crate source. That is a reason to expect the tip to be green — never a
+reason to tag without confirming it.
 
 ## Release sequence
 
