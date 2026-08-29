@@ -89,6 +89,14 @@ above rather than improvising:
 | clippy | `cargo clippy --workspace --all-targets -- -D warnings` | pass |
 | API snapshots | `ZEN_API_DOC=regen cargo test -p zenutils-apidoc --test public_api_doc` | pass, no diff (already current as of 038c201) |
 | packaging | `cargo publish --dry-run -p zenutils-fuzz` | pass — 6 files, 36.5 KiB (10.0 KiB compressed) |
+| guard mutation | `python3 scripts/mutate-fuzz-guards.py` | pass — 9/9 mutations CAUGHT, baseline green before and after, source restored |
+
+The mutation gate is the one that matters most for this particular release. The
+whole point of 0.2.0 is refusing to pass vacuously, so a guard that rotted into
+a no-op would be the exact failure the release exists to prevent. Reverting each
+guard to its 0.1.0 permissive behaviour one at a time turns at least one test
+red every time (1 to 8 tests per mutation), so every new guard is genuinely
+pinned rather than merely present.
 
 Packaged file list is exactly `.cargo_vcs_info.json`, `Cargo.lock`,
 `Cargo.toml`, `Cargo.toml.orig`, `README.md`, `src/lib.rs`. No session files, no
