@@ -92,7 +92,16 @@ above rather than improvising:
 
 Packaged file list is exactly `.cargo_vcs_info.json`, `Cargo.lock`,
 `Cargo.toml`, `Cargo.toml.orig`, `README.md`, `src/lib.rs`. No session files, no
-snapshot docs, no tests.
+snapshot docs, no tests. Re-verified on a pristine `git archive origin/main`
+export so the result does not depend on `--allow-dirty`.
+
+**CI is green on the release commit.** Run
+[33258142056](https://github.com/imazen/zenutils/actions/runs/33258142056) on
+`27d5d21`: 12/12 jobs success — ubuntu-latest, ubuntu-24.04-arm, macos-latest,
+macos-26-intel, windows-latest, windows-11-arm, i686 (`cross`), WASM check,
+Clippy, Format, MSRV, Public API snapshots. Step 2 of the sequence below is
+therefore already satisfied for this commit; re-check if anything lands on
+`main` before you tag.
 
 ## Release sequence
 
