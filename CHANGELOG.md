@@ -24,6 +24,12 @@ All notable changes to crates in this workspace are documented here, following
   onboarding-function convention, and the fair-benchmark repro/chart standard.
 - `docs/zen-crates.tsv` — canonical zen* family registry (name/group/repo/one-liner)
   driving the crosslink footer.
+- `scripts/mutate-fuzz-guards.py` — mutation-verifies the `zenutils-fuzz` seed
+  expectation guards. Reverts each guard, one at a time, to the permissive
+  behaviour it replaced, runs the suite, and reports which tests noticed; a
+  mutation nothing catches is an unprotected guard. `RegressionSuite` exists to
+  refuse vacuous passes, so its own guards silently rotting into no-ops is the
+  exact failure it is supposed to prevent. Currently 9 mutations, all caught.
 - `scripts/render-crosslink-footer.sh`, `scripts/gen-readme-crates.sh`,
   `scripts/splice-footer.sh` — render the footer from the registry, generate the
   trimmed crates.io README from README.md, and splice footers in place. The footer
