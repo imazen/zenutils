@@ -140,16 +140,23 @@ All notable changes to crates in this workspace are documented here, following
 
 ### [Unreleased]
 
-Nothing yet.
+Nothing yet — 0.2.0 below is prepared but not published.
 
 ### [0.2.0] - unreleased
 
 Breaking release. `0.1` -> `0.2` is the semver-incompatible component for a 0.x
 crate, approved 2026-08-29 for the mandatory-seed-expectation change below.
-Cargo does **not** auto-upgrade the ten `zenutils-fuzz = "0.1.0"` consumers
-across the workspace — a 0.x minor bump is treated as incompatible, so each repo
-moves only when it deliberately bumps the dep. Release checklist:
-`docs/RELEASE_0.2.0.md`.
+
+Publishing this cannot break anyone. The crate is a `[dev-dependency]`
+everywhere it is used, so it reaches no published artifact and no runtime path;
+and a `zenutils-fuzz = "0.1.0"` requirement does not resolve to 0.2.0, because
+Cargo treats a 0.x minor bump as incompatible. Each repo moves only when it
+deliberately edits its manifest — and must add a `.min_seeds(n)` or
+`.allow_empty_corpus()` call in the same commit, or its regression suite panics.
+Measured on the 2026-08-29 checkout: 9 manifests across 8 repos declare it, 8 of
+the 9 declare no expectation yet, and 3 more crates (zenavif, heic,
+zenextras/zentiff) are carrying hand-written stand-ins waiting on this release.
+Release checklist and the per-consumer table: `docs/RELEASE_0.2.0.md`.
 
 #### Breaking
 - `RegressionSuite::run` no longer treats an undeclared seed expectation as a
