@@ -6,27 +6,41 @@
 # impls omitted; re-export duplicates annotated `[also: path]`.
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
-# files: zenutils-fuzz.txt 7 lines (supported surface) | zenutils-fuzz.features.txt 0 added (features: none) | zenutils-fuzz.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+# files: zenutils-fuzz.txt 16 lines (supported surface) | zenutils-fuzz.features.txt 0 added (features: none) | zenutils-fuzz.internal.txt 0 lines (0 hidden + 0 excluded-feature)
 
 ## summary
 #
 #   pub modules                                 1
-#   pub types (struct/enum/trait/alias)         1
-#   inherent methods                            3
+#   pub types (struct/enum/trait/alias)         2
+#   inherent methods                           10
+#   trait roster entries (type × trait)         3
+#   auto-trait-complete types                   1
 #   auto-trait exceptions                       1
 #
 # per-module pub lines:
-#   (root)                            5
+#   (root)                           13
 
-## items (5 lines)
+## items (13 lines)
 
 pub mod zenutils_fuzz
+pub struct RegressionReport
+pub fn RegressionReport::invocations(&self) -> usize
+pub fn RegressionReport::seed_dir(&self) -> &std::path::Path
+pub fn RegressionReport::seed_paths(&self) -> &[std::path::PathBuf]
+pub fn RegressionReport::seeds_replayed(&self) -> usize
+pub fn RegressionReport::targets(&self) -> usize
 pub struct RegressionSuite
+pub fn RegressionSuite::allow_empty_corpus(self) -> Self
+pub fn RegressionSuite::min_seeds(self, usize) -> Self
 pub fn RegressionSuite::new<P: core::convert::Into<std::path::PathBuf>>(P) -> Self
-pub fn RegressionSuite::run(self)
+pub fn RegressionSuite::run(self) -> RegressionReport
 pub fn RegressionSuite::target<F>(self, &str, F) -> Self where F: core::ops::function::Fn(&[u8]) + core::marker::Send + core::marker::Sync + 'static
+
+## trait impls (1 types)
+
+RegressionReport: Clone, Debug, Display
 
 ## auto traits
 
-0 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
+1 types implement all of: Freeze, RefUnwindSafe, Send, Sync, Unpin, UnwindSafe
 RegressionSuite: !RefUnwindSafe !UnwindSafe
