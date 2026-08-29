@@ -7,6 +7,16 @@ All notable changes to crates in this workspace are documented here, following
 
 ### [Unreleased]
 
+#### Fixed
+- CI on `main` had been red since 2026-06-25 on three jobs, all pre-existing and
+  unrelated to each other: **Format** (`zenutils-apidoc/src/lib.rs` was not
+  `cargo fmt`-clean in two test bodies), **Clippy** (`snapshot_one` took 8
+  arguments against clippy's limit of 7 — fixed by bundling the five
+  per-package inputs into a private `PackageSnapshotSpec`, not by an `allow`),
+  and **Public API snapshots** (`docs/public-api/zenutils-apidoc.txt` never got
+  regenerated after `no_file_meta_header` / `no_autotraits_summary` landed in
+  8a5a290).
+
 #### Added
 - `docs/readme-conventions.md` — single source of truth for zen* README/onboarding
   conventions: split README.md (GitHub, full badges) + generated README.crates.md
@@ -121,9 +131,59 @@ All notable changes to crates in this workspace are documented here, following
 
 ### [Unreleased]
 
+#### QUEUED BREAKING CHANGES
+<!-- Ship together as 0.2.0. Requires user approval for the leading-digit bump
+     (0.1 -> 0.2 is the semver-incompatible component for a 0.x crate).
+     Cargo will NOT auto-upgrade the ten `zenutils-fuzz = "0.1.0"` consumers
+     across the workspace: a 0.x minor bump is treated as incompatible, so each
+     repo moves only when it deliberately bumps the dep. -->
+- `RegressionSuite::run` no longer treats an undeclared seed expectation as a
+  silent pass. Every suite must now declare either `.min_seeds(n)` or
+  `.allow_empty_corpus()`; a suite that declares neither panics with a message
+  naming both. The old behaviour — replay whatever is there, no-op if there is
+  nothing — is still available, as `.allow_empty_corpus()`; it is simply no
+  longer what you get by saying nothing. Rationale: a missing corpus and a
+  clean run were indistinguishable, and every observed instance of the former
+  reported green (zenjxl-decoder's wasm legs replayed zero seeds for the whole
+  life of its harness, because WASI refuses to traverse the literal `..` in
+  its seed path). (`RegressionReport` docs carry the full case.)
+- `RegressionSuite::run` returns `RegressionReport` instead of `()`.
+  Deliberately NOT `#[must_use]`, so existing `suite.run();` statements keep
+  compiling unchanged under `-D warnings`.
+- A seed directory that exists but cannot be scanned (unreadable, or a path
+  that is not a directory) is now a panic under every expectation, including
+  `.allow_empty_corpus()`. It was previously indistinguishable from an empty
+  corpus. This is what makes the WASI `..` case fail loudly instead of green.
+
+#### Added
+- `RegressionSuite::min_seeds(n)` — the seed directory must exist, be readable,
+  and yield at least `n` replayed seeds; a missing, unreadable, empty, or short
+  corpus fails with a message saying **which** of those it was, since the four
+  have different causes and different fixes. `n` counts what the suite actually
+  replays (dotfiles, `*.md` and `*.txt` are already filtered out), so a
+  `README.md` in the corpus directory cannot inflate it — the mistake most
+  hand-rolled seed counters in the workspace make.
+- `RegressionSuite::allow_empty_corpus()` — explicit opt-in to the permissive
+  behaviour, for a crate that genuinely has no corpus yet. Tolerates an absent
+  or empty directory; still fails on an unreadable one.
+- `RegressionSuite::min_seeds(0)` — distinct from `allow_empty_corpus()`: the
+  directory must exist, but may hold no seeds. For a deliberately-empty corpus
+  (zenflate's one open repro needs a ~19 MB input, gated by a unit test
+  instead) whose directory must not silently disappear.
+- `RegressionReport`, returned by `run()`: `seeds_replayed()`, `targets()`,
+  `invocations()`, `seed_paths()`, `seed_dir()`, plus `Display` and `Debug`.
+  Callers no longer have to re-implement the seed filter to count the corpus —
+  twelve repos had grown a hand-rolled counter, eight of them a byte-identical
+  copy of the same 25-line helper.
+- 9 further unit tests (15 total) covering the undeclared/absent/unreadable/
+  empty/short cases, report counts, expectation ordering, and the
+  `README.md`-counted-as-a-seed trap.
+
+### [0.1.0] - 2026-05-27
+
 #### Added
 - Initial `zenutils-fuzz` crate: a fuzz-regression seed-corpus runner
-  (`RegressionSuite`) moved from the un-versioned `zen-fuzz-regress` helper.
-  Walks `fuzz/regression/*` and feeds every seed through every registered
-  fuzz-target entry point; a panic surfaces seed path + target name. Ships
-  with 6 unit tests covering no-op/empty/recursion/meta-skip/panic paths.
+  (`RegressionSuite`) moved from the un-versioned `zen-fuzz-regress` helper
+  (2712fe2). Walks `fuzz/regression/*` and feeds every seed through every
+  registered fuzz-target entry point; a panic surfaces seed path + target name.
+  Ships with 6 unit tests covering no-op/empty/recursion/meta-skip/panic paths.
