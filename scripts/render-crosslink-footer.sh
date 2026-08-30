@@ -36,6 +36,7 @@ awk -F'\t' -v self="$SELF" '
     label["compression"]="Compression"; label["process"]="Processing"
     label["color"]="Pixels \x26 color"; label["framework"]="Pipeline \x26 framework"
     label["metrics"]="Metrics"; label["ml"]="Pickers \x26 ML"
+    label["corpora"]="Test corpora"
     SEP=" \xC2\xB7 "
   }
   /^#/ || NF<3 { next }
@@ -50,7 +51,7 @@ awk -F'\t' -v self="$SELF" '
     print ""
     print "| | |"
     print "|:--|:--|"
-    nimg = split("codecs internals compression process color framework metrics ml", ord, " ")
+    nimg = split("codecs internals compression process color framework metrics ml corpora", ord, " ")
     for (i=1;i<=nimg;i++) { g=ord[i]; if (items[g]!="") print "| " label[g] " | " cell(g) " |" }
     print "| Products | [Imageflow] image engine ([.NET][imageflow-dotnet]" SEP "[Node][imageflow-node]" SEP "[Go][imageflow-go])" SEP "[Imageflow Server]" SEP "[ImageResizer] (C#) |"
     print ""

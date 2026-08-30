@@ -2,7 +2,7 @@
 # Source of truth for the README crosslink footer. Edit here, then regenerate
 # every crate's footer with scripts/render-crosslink-footer.sh.
 # Columns: name <TAB> group <TAB> repo <TAB> one-liner
-# Groups (render order): codecs internals compression process color framework metrics ml tools
+# Groups (render order): codecs internals compression process color framework metrics ml corpora tools
 # Only zen-native crates we publish appear here. Upstream forks we don't own
 # (fax/tiff/weezl/rawloader/jxl-oxide/rust-rgb/aom-decoder-rs/mozjpeg-rs/dssim/moxcms)
 # are intentionally excluded — we don't inject our conventions into them.
@@ -18,6 +18,8 @@ zenwebp	codecs	https://github.com/imazen/zenwebp	Pure-Rust WebP, lossy and lossl
 zengif	codecs	https://github.com/imazen/zengif	Zero-trust GIF codec with streaming and animation
 zenavif	codecs	https://github.com/imazen/zenavif	AVIF codec built on rav1d-safe and zenravif
 zenjxl	codecs	https://github.com/imazen/zenjxl	JPEG XL encode + decode with zencodec traits
+zenjxl-decoder	codecs	https://github.com/imazen/zenjxl-decoder	Pure-Rust JPEG XL decoder with multi-arch SIMD
+jxl-encoder	codecs	https://github.com/imazen/jxl-encoder	Pure-Rust JPEG XL encoder (modular + VarDCT)
 zenbitmaps	codecs	https://github.com/imazen/zenbitmaps	PNM/PAM/PFM, BMP, farbfeld, QOI, TGA, Radiance HDR
 heic	codecs	https://github.com/imazen/heic	Pure-Rust HEIC/HEIF decoder with SIMD
 zentiff	codecs	https://github.com/imazen/zenextras	TIFF decoding and encoding with zenpixels integration (in zenextras)
@@ -26,8 +28,6 @@ zensvg	codecs	https://github.com/imazen/zenextras	SVG render + lossless optimiza
 zenjp2	codecs	https://github.com/imazen/zenextras	JPEG 2000 decoder via hayro (in zenextras)
 zenraw	codecs	https://github.com/imazen/zenraw	Camera RAW/DNG decoder, linear f32 output
 ultrahdr	codecs	https://github.com/imazen/ultrahdr	Ultra HDR (JPEG + gain map) math, metadata, tone mapping
-zenjxl-decoder	internals	https://github.com/imazen/zenjxl-decoder	Pure-Rust JPEG XL decoder with multi-arch SIMD
-jxl-encoder	internals	https://github.com/imazen/jxl-encoder	Pure-Rust JPEG XL encoder (modular + VarDCT)
 zenrav1e	internals	https://github.com/imazen/zenrav1e	AV1 still/animated image encoder (rav1e fork)
 rav1d-safe	internals	https://github.com/imazen/rav1d-safe	Safe SIMD AV1 decoder (rav1d fork, no C FFI)
 zenravif	internals	https://github.com/imazen/cavif-rs	AVIF encoder with still image, animation, HDR, and metadata support
@@ -63,11 +63,12 @@ zenanalyze	ml	https://github.com/imazen/zenanalyze	Image-feature extraction for 
 zenpredict	ml	https://github.com/imazen/zenanalyze	Zero-copy MLP runtime + ZNPR model parser
 zenpicker	ml	https://github.com/imazen/zenanalyze	Codec-family meta-picker over zenpredict
 zenanalyze-api	ml	https://github.com/imazen/zenanalyze	Version-unifying feature contract (Request/Offer) shared across the picker tree (in zenanalyze)
+codec-corpus	corpora	https://github.com/imazen/codec-corpus	Runtime API for downloading and caching codec test-image datasets
+imazen-26	corpora	https://github.com/imazen/imazen-26	The imazen-26 image corpus: provenance manifests, canonical split, variant-set registry, generation tooling
 zenbench	tools	https://github.com/imazen/zenbench	Interleaved microbenchmarking with paired statistics
 archmage	tools	https://github.com/imazen/archmage	Safe SIMD dispatch via CPU capability tokens
 magetypes	tools	https://github.com/imazen/archmage	Shared SIMD primitive types for archmage
 enough	tools	https://github.com/imazen/enough	Cooperative cancellation tokens
 whereat	tools	https://github.com/lilith/whereat	Lightweight error-location tracking, no_std
 cargo-copter	tools	https://github.com/imazen/cargo-copter	Test reverse-deps against multiple crate versions
-codec-corpus	tools	https://github.com/imazen/codec-corpus	Runtime API for downloading and caching codec test-image datasets
 zenutils	tools	https://github.com/imazen/zenutils	Shared dev-time helpers: public-API snapshots (zenutils-apidoc), fuzz-regression runner (zenutils-fuzz)

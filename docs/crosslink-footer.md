@@ -12,21 +12,22 @@ a private or archived target is a dead link in every README that carries it.
 
 | | |
 |:--|:--|
-| **Codecs** ¹ | [zenjpeg] · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenbitmaps] · [heic] · [zentiff] · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
-| Codec internals | [zenjxl-decoder] · [jxl-encoder] · [zenrav1e] · [rav1d-safe] · [zenravif] · [zenavif-parse] · [zenavif-serialize] |
+| **Codecs** ¹ | [zenjpeg] · [zenpng] · [zenwebp] · [zengif] · [zenavif] · [zenjxl] · [zenjxl-decoder] · [jxl-encoder] · [zenbitmaps] · [heic] · [zentiff] · [zenpdf] · [zensvg] · [zenjp2] · [zenraw] · [ultrahdr] |
+| Codec internals | [zenrav1e] · [rav1d-safe] · [zenravif] · [zenavif-parse] · [zenavif-serialize] |
 | Compression | [zenflate] · [zenzop] · [zenzstd] |
 | Processing | [zenresize] · [zenquant] · [zenblend] · [zenfilters] · [zensally] · [zentone] |
 | Pixels & color | [zenpixels] · [zenpixels-convert] · [linear-srgb] · [garb] · [zenyuv] |
 | Pipeline & framework | [zenpipe] · [zencodec] · [zencodecs] · [zenlayout] · [zennode] · [zenwasm] · [zentract] |
 | Metrics | [zensim] · [fast-ssim2] · [butteraugli] · [zenmetrics] · [resamplescope-rs] |
 | Pickers & ML | [zenanalyze] · [zenpredict] · [zenpicker] · [zenanalyze-api] |
+| Test corpora | [codec-corpus] · [imazen-26] |
 | Products | [Imageflow] image engine ([.NET][imageflow-dotnet] · [Node][imageflow-node] · [Go][imageflow-go]) · [Imageflow Server] · [ImageResizer] (C#) |
 
 <sub>¹ pure-Rust, `#![forbid(unsafe_code)]` codecs, as of 2026</sub>
 
 ### General Rust awesomeness
 
-[zenbench] · [archmage] · [magetypes] · [enough] · [whereat] · [cargo-copter] · [codec-corpus] · [zenutils]
+[zenbench] · [archmage] · [magetypes] · [enough] · [whereat] · [cargo-copter] · [zenutils]
 
 [Open source](https://www.imazen.io/open-source) · [@imazen](https://github.com/imazen) · [@lilith](https://github.com/lilith) · [lib.rs/~lilith](https://lib.rs/~lilith)
 
@@ -36,6 +37,8 @@ a private or archived target is a dead link in every README that carries it.
 [zengif]: https://github.com/imazen/zengif
 [zenavif]: https://github.com/imazen/zenavif
 [zenjxl]: https://github.com/imazen/zenjxl
+[zenjxl-decoder]: https://github.com/imazen/zenjxl-decoder
+[jxl-encoder]: https://github.com/imazen/jxl-encoder
 [zenbitmaps]: https://github.com/imazen/zenbitmaps
 [heic]: https://github.com/imazen/heic
 [zentiff]: https://github.com/imazen/zenextras
@@ -44,8 +47,6 @@ a private or archived target is a dead link in every README that carries it.
 [zenjp2]: https://github.com/imazen/zenextras
 [zenraw]: https://github.com/imazen/zenraw
 [ultrahdr]: https://github.com/imazen/ultrahdr
-[zenjxl-decoder]: https://github.com/imazen/zenjxl-decoder
-[jxl-encoder]: https://github.com/imazen/jxl-encoder
 [zenrav1e]: https://github.com/imazen/zenrav1e
 [rav1d-safe]: https://github.com/imazen/rav1d-safe
 [zenravif]: https://github.com/imazen/cavif-rs
@@ -81,13 +82,14 @@ a private or archived target is a dead link in every README that carries it.
 [zenpredict]: https://github.com/imazen/zenanalyze
 [zenpicker]: https://github.com/imazen/zenanalyze
 [zenanalyze-api]: https://github.com/imazen/zenanalyze
+[codec-corpus]: https://github.com/imazen/codec-corpus
+[imazen-26]: https://github.com/imazen/imazen-26
 [zenbench]: https://github.com/imazen/zenbench
 [archmage]: https://github.com/imazen/archmage
 [magetypes]: https://github.com/imazen/archmage
 [enough]: https://github.com/imazen/enough
 [whereat]: https://github.com/lilith/whereat
 [cargo-copter]: https://github.com/imazen/cargo-copter
-[codec-corpus]: https://github.com/imazen/codec-corpus
 [zenutils]: https://github.com/imazen/zenutils
 [Imageflow]: https://github.com/imazen/imageflow
 [Imageflow Server]: https://github.com/imazen/imageflow-dotnet-server
