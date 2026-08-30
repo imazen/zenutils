@@ -14,6 +14,8 @@
 #   QUICK   no Quick start section (section 4)
 #   FOOTER  no crosslink footer (section 3)
 #   STALE   footer differs from what the registry renders today (section 3)
+#   BEHIND  the working-tree README differs from the one on origin, so this
+#           checkout cannot answer STALE — fetch before trusting that column
 #   CRATES  no README.crates.md beside a published crate's README (section 1)
 #   RDME    Cargo.toml does not point readme= at README.crates.md (section 1)
 #   LONG    over 400 lines; depth belongs in docs/ (section 4e)
@@ -44,11 +46,27 @@ for root in "${roots[@]}"; do
     grep -qiE '^#+ +status\b' "$readme" || f+=(STATUS)
     grep -qiE '^#+ +(quick ?start|install)' "$readme" || f+=(QUICK)
     if grep -q '^## Image tech I maintain' "$readme"; then
-      tmp="$readme.lint.tmp"; cp "$readme" "$tmp"
-      sh "$HERE/render-crosslink-footer.sh" --self "$self" \
-        | sh "$HERE/splice-footer.sh" "$tmp" >/dev/null 2>&1
-      cmp -s "$readme" "$tmp" || f+=(STALE)
-      rm -f "$tmp"
+      # A checkout parented behind its own bookmark holds an old README; judging
+      # STALE from it reports the checkout's lag, not the registry's.
+      top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)
+      behind=0
+      if [ -n "$top" ]; then
+        db=$(git -C "$top" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+        db=${db#origin/}; [ -n "$db" ] || db=main
+        rel=${readme#$top/}
+        if git -C "$top" cat-file -e "origin/$db:$rel" 2>/dev/null; then
+          git -C "$top" show "origin/$db:$rel" 2>/dev/null | cmp -s - "$readme" || behind=1
+        fi
+      fi
+      if [ "$behind" -eq 1 ]; then
+        f+=(BEHIND)
+      else
+        tmp="$readme.lint.tmp"; cp "$readme" "$tmp"
+        sh "$HERE/render-crosslink-footer.sh" --self "$self" \
+          | sh "$HERE/splice-footer.sh" "$tmp" >/dev/null 2>&1
+        cmp -s "$readme" "$tmp" || f+=(STALE)
+        rm -f "$tmp"
+      fi
     else
       f+=(FOOTER)
     fi

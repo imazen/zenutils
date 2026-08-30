@@ -87,15 +87,36 @@ zenzstd                STATUS STALE
 `STATUS` dominates because the rule is new — section 4b now requires a maturity
 label and an explicit "Not supported" list, and almost nothing has one yet.
 `CRATES`/`RDME` mean the two-file GitHub/crates.io split never reached those
-crates. `STALE` clears when the footer re-render pass runs.
+crates. `BEHIND` (37) is checkouts lagging origin, not stale content — a pre-existing
+condition of this workspace, unrelated to the footer.
 
 Full per-README detail: run `scripts/readme-lint.sh`.
 
+## Re-render: done
+
+All **102** footer-bearing READMEs on origin now carry the current footer, and
+every link target in the shipped footer resolves (public, unarchived). The
+dead-link repair has reached readers.
+
+Two things to carry forward from that pass:
+
+- **`jj rebase -d main` resolves the LOCAL bookmark, not `main@origin`.** After a
+  fetch that moved the remote, rebasing onto `main` and pushing is a *sideways*
+  move that silently drops whatever the remote gained — 112 commits on zensim and
+  12 on zenanalyze, restored by force-pushing each back to its exact prior tip.
+  Rebase onto `main@origin` explicitly, and gate every push on
+  `git merge-base --is-ancestor <prior-remote-tip> HEAD`. "My commit is on origin"
+  is not the same check and will not catch this.
+- **Most checkouts here are parented behind their own bookmark**, so a jj command
+  resets the working tree to an older README. That is why the linter now reports
+  `BEHIND` separately from `STALE`: judging staleness from a lagging checkout
+  measures the checkout, not the registry. Editing through a detached worktree off
+  `origin/<default>` sidesteps it entirely and never touches another session's
+  working copy.
+
 ## Order of work
 
-1. Re-render the footer everywhere (`scripts/rerender-footers.sh --apply`) — this
-   is what actually delivers the dead-link repair to readers. Clears `STALE` (38).
-2. `zenravif` — adopt the conventions at all; it is the only published crate with
+1. `zenravif` — adopt the conventions at all; it is the only published crate with
    none of them.
 3. The four highest-drift crates by changed source files: zenjpeg (251),
    zenmetrics (204), zenwebp (149), zensim (85).
