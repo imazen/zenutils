@@ -3,8 +3,8 @@
 The single source of truth for how every zen-native crate presents itself on
 GitHub and crates.io. Apply this to all zen-native published crates (codecs,
 processing, metrics, pixels/color, compression, framework, ML, tools). Upstream
-forks we don't own (`fax`, `tiff`, `weezl`, `rawloader`, `cavif`,
-`aom-decoder-rs`, `mozjpeg-rs`) are out of scope — don't inject our conventions
+forks we don't own (`fax`, `tiff`, `weezl`, `rawloader`, `jxl-oxide`, `rust-rgb`,
+`aom-decoder-rs`, `mozjpeg-rs`, `dssim`, `moxcms`) are out of scope — don't inject our conventions
 into them.
 
 Tooling lives next to this doc:
@@ -13,6 +13,10 @@ Tooling lives next to this doc:
 - `scripts/render-crosslink-footer.sh --self <crate>` — renders the footer.
 - `scripts/gen-readme-crates.sh <crate-dir>` — regenerates `README.crates.md`.
 - `scripts/splice-footer.sh <README>` — splices a rendered footer in place.
+- `scripts/check-crosslink-targets.sh` — fails if any linked repo went private,
+  archived, or missing (one dead target = a dead link in ~125 READMEs).
+- `scripts/readme-drift.sh [ROOT]` — how far each README's prose has fallen
+  behind its code, ignoring footer-only commits (§9).
 
 ---
 
@@ -126,6 +130,13 @@ aren't circular on crates.io. When the family gains or loses a crate, edit
 `docs/zen-crates.tsv` and re-render every footer. See `docs/crosslink-footer.md`
 for the current rendered block.
 
+**Before re-rendering, run `scripts/check-crosslink-targets.sh`.** The footer is
+copied into every README, so a target that went private or archived is not one
+broken link — it is one broken link per README. The registry's repo column is the
+repo a crate *ships from*, which is often not a repo of the same name (several
+crates were consolidated into `zenextras`, `zenpipe`, `zenavif`, and `zenanalyze`),
+so never infer the URL from the crate name.
+
 Hub crates (`zencodec`, `zencodecs`, `zenpipe`) may additionally carry a
 format-specific table higher up; the rendered footer is still required.
 
@@ -133,20 +144,28 @@ format-specific table higher up; the rendered footer is still required.
 
 ## 4. README skeleton
 
+A reader arrives with three questions and abandons the page if the first screen
+doesn't answer them: **what is this, should I use it, how do I start.** Answer
+them in that order, above the fold, before anything else.
+
 ```
 # <crate> <badges>
 
-<one-paragraph intro: what it is, what's special, key guarantees
- (pure Rust, forbid(unsafe_code), no_std, SIMD)>
+<ONE sentence: what it does and for whom. No history, no motivation.>
+
+<Facts line — the go/no-go data (see §4a).>
 
 ## Quick start
 ```toml
 [dependencies]
-<crate> = "X.Y"          # full version, never truncated
+<crate> = "X.Y.Z"        # full version, never truncated
 ```
 ```rust
 // the ONE-SHOT path — the core job in one call (see §5)
 ```
+
+## Status
+<maturity label + what is NOT supported (see §4b) + link to CHANGELOG>
 
 ## <features / usage / API highlights>
 
@@ -160,6 +179,68 @@ format-specific table higher up; the rendered footer is still required.
 
 ## Image tech I maintain    <- rendered footer (always last)
 ```
+
+Ordering rule: **decision data before depth.** Anything a reader needs in order
+to decide whether to keep reading goes above the first `##` after Quick start.
+Anything they only need after committing (feature-flag matrices, per-format
+tables, tuning knobs) goes below, or in `docs/`.
+
+### 4a. The facts line
+
+Right under the intro sentence, one compact row of the facts that decide
+adoption. Keep it to what is true and checkable — omit a field rather than guess:
+
+```markdown
+`no_std` + `alloc` · `#![forbid(unsafe_code)]` · MSRV 1.85 · x86-64 / aarch64 / wasm32 SIMD · AGPL-3.0 or commercial
+```
+
+MSRV must be the version CI actually pins. If nothing enforces it, say
+"MSRV: not pinned" rather than printing a number nobody tests.
+
+### 4b. Status and scope honesty
+
+Every README carries a maturity label from this fixed vocabulary, so the reader
+never has to infer it from the version number:
+
+| Label | Means |
+|---|---|
+| **Research / pre-0.1** | API changes without notice; not published, or published for coordination only |
+| **Preview** | published, API still moving; breaking changes in minor bumps |
+| **Stable** | breaking changes only on a leading-digit bump; `cargo semver-checks` gated |
+| **Maintenance** | no new features; fixes and security only |
+
+Then state what it does **not** do. A short "Not supported" list is worth more
+reader-trust than any feature list, and it is the section most often missing.
+Cover: formats/variants not handled, platforms not tested, known precision or
+conformance gaps, and anything the crate deliberately delegates elsewhere.
+
+Never soften a gap into a feature. If a code path is simplified, say which parts
+are simplified — the same standard the repo applies to status reporting.
+
+### 4c. Positioning without shade
+
+Comparisons to other projects are allowed and useful; disparagement is not.
+Frame every difference as **our requirement**, not their deficiency: "this crate
+targets X because we need Y" — never "unlike A, which can't…". Credit upstream
+work plainly. A comparison table is fine when every row is measured and the
+methodology link is right there (§6); a table of adjectives is not.
+
+### 4d. Images, diagrams, and links
+
+- Every image needs real alt text describing the content, not `![diagram]`.
+- Diagrams must be legible on **both** GitHub themes — a dark-mode-invisible SVG
+  is a broken image for half the readers. Vendor a theme-safe SVG, or supply
+  `<picture>` with `prefers-color-scheme` sources.
+- Links and images in crates.io-visible sections must be **absolute** (§1).
+- Prefer a small diagram that shows the real data flow over a large one that
+  shows the marketing story.
+
+### 4e. Length
+
+Past roughly 400 lines a README stops being read and starts being scrolled past.
+When a section outgrows that, move the depth into `docs/<topic>.md` and leave a
+one-line pointer. The README's job is to get someone to a working call and an
+informed decision — not to be the manual.
 
 ---
 
@@ -253,15 +334,58 @@ Avoid pie charts, 3D, and dual-axis plots — they obscure the comparison.
 
 ---
 
-## 8. Per-crate checklist
+## 8. Keeping the README from drifting
+
+READMEs rot silently, because the thing that changes is the code, not the file.
+The footer rollout makes this invisible to `git log README.md`: every README gets
+a fresh commit date while its prose is untouched. `scripts/readme-drift.sh`
+hashes only the text *above* the footer, so it reports the last time the README
+actually said something new, plus what has landed since.
+
+```sh
+zenutils/scripts/readme-drift.sh ~/work/zen        # worst-first
+```
+
+Read the `RSFILES` column first: a high count of changed `.rs` files against an
+old `BODY_LAST` means the README is describing an API that has moved. `COMMITS`
+alone is noisy (releases, CI, lockfiles); changed source files are the signal.
+
+**The gate: reconcile the README at release time, not "later".** Before tagging,
+diff the CHANGELOG entries added since `BODY_LAST` against the README body and
+fix what no longer matches. That is already a checklist item below; the drift
+script is how you find the crates where it was skipped.
+
+Two failure modes this catches, both observed in this tree:
+
+- A README that never mentions a subsystem the repo grew. Grep the README for
+  every crate name under `crates/` and every top-level module — a zero hit for
+  something that ships is a gap, not a style choice.
+- A published crate that never adopted the conventions at all: no badge row, no
+  `README.crates.md`, no footer. Those don't show as drift because there is
+  nothing to drift from. `scripts/check-crosslink-targets.sh` plus a `grep -L`
+  for the footer heading finds them.
+
+Do not "fix" drift by deleting the stale claim and leaving nothing. Replace it
+with what is true now, or move it to `docs/` — a shrinking README that stops
+answering the reader's three questions is a regression, not cleanup.
+
+---
+
+## 9. Per-crate checklist
 
 - [ ] H1 badge row matches §2 (flat-square, correct order, no `branch=`).
-- [ ] One-paragraph intro + **Quick start** using the one-shot fn (§5).
+- [ ] One-sentence intro + facts line (§4a) + **Quick start** using the one-shot
+      fn (§5) — all on the first screen.
+- [ ] **Status** section: maturity label + an explicit "Not supported" list (§4b).
+- [ ] No disparagement of other projects; comparisons framed as our needs (§4c).
+- [ ] Images carry real alt text and render on both GitHub themes (§4d).
 - [ ] One-shot fn added (additive), feature-gated, with a doctest.
 - [ ] Body reflects the **current** API — reconciled against CHANGELOG entries and
       GitHub releases since the last README overhaul (docs lie; trace source).
 - [ ] Benchmarks (if any) follow §6 and link to `benchmarks/…md`; heavy tables
       wrapped in `crates.io:skip` markers.
-- [ ] Crosslink footer rendered with `--self` (§3), placed last.
+- [ ] Crosslink footer rendered with `--self` (§3), placed last, and
+      `check-crosslink-targets.sh` is clean.
+- [ ] `readme-drift.sh` shows no unexplained gap for this crate (§8).
 - [ ] `README.crates.md` regenerated; `readme = "README.crates.md"` in Cargo.toml.
 - [ ] `cargo semver-checks` clean for the intended bump.
