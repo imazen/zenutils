@@ -29,12 +29,29 @@ done
 [ ${#roots[@]} -eq 0 ] && roots=("$(cd "$HERE/../.." && pwd)")
 [ "$APPLY" -eq 0 ] && echo "DRY RUN — nothing will be written (pass --apply to write)"
 
-changed=0; same=0; repos=()
+# A repo whose .workongoing was refreshed in the last 5 minutes belongs to
+# another session; editing its worktree underneath it is the concurrent-edit
+# clobber the marker exists to prevent.
+claimed_elsewhere() {
+  local m="$1/.workongoing" ts age
+  [ -f "$m" ] || return 1
+  ts=$(awk 'NR==1{print $1}' "$m")
+  age=$(( $(date -u +%s) - $(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null || echo 0) ))
+  [ "$age" -lt 300 ] && [ "$age" -gt -300 ]
+}
+
+changed=0; same=0; skipped=0; repos=()
 for root in "${roots[@]}"; do
   while IFS= read -r readme; do
     case "$readme" in *--*/*|*/target/*|*/node_modules/*) continue ;; esac
     grep -q '^## Image tech I maintain' "$readme" || continue
     dir=$(dirname "$readme")
+    top=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)
+    if [ -n "$top" ] && claimed_elsewhere "$top"; then
+      printf "SKIP    %-58s (claimed: %s)\n" "${readme#$root/}" \
+        "$(cut -d' ' -f2 "$top/.workongoing")"
+      skipped=$((skipped+1)); continue
+    fi
     self=$(awk '/^\[package\]/{p=1;next} /^\[/{p=0} p&&/^name *=/{gsub(/.*= *"|"/,"");print;exit}' \
              "$dir/Cargo.toml" 2>/dev/null)
     [ -n "$self" ] || self=$(basename "$dir")
@@ -59,7 +76,7 @@ for root in "${roots[@]}"; do
 done
 
 echo "---"
-echo "would change: $changed   already current: $same"
+echo "would change: $changed   already current: $same   skipped (claimed): $skipped"
 [ "$APPLY" -eq 0 ] && exit 0
 
 printf '%s\n' "${repos[@]}" | sort -u | while read -r r; do
