@@ -59,6 +59,33 @@
 //!
 //! - **`<crate>.txt`** — the supported surface: default features, hidden
 //!   items excluded. What a consumer who types `cargo add <crate>` gets.
+//!
+//! # Architecture handling
+//!
+//! A crate that dispatches SIMD through archmage exposes a different public
+//! surface per `target_arch`: on x86_64 the `tokens` module carries
+//! `X64V3Token`/`X64V4Token` entry points and `x8`/`x16` lane modules; on
+//! aarch64 it carries `NeonToken` and only `x4`. Snapshots are therefore
+//! partitioned so they can be verified on ANY target:
+//!
+//! - `## items` holds only lines with nothing arch-specific in them, so it is
+//!   byte-identical on every target.
+//! - `## arch surface: <arch>` holds that target's concrete spellings. On
+//!   regeneration each machine rewrites only its own section and preserves
+//!   every other one, so the file accumulates architectures over time.
+//! - `## arch shapes` deduplicates those sections: the several per-tier
+//!   spellings of one entry point collapse to a single row tagged with the
+//!   architectures that provide it (`[all]` vs `[x86_64]`), and the header's
+//!   `arch-unique surface:` line carries the per-arch counts.
+//!
+//! `ScalarToken` and the `_scalar` suffix are portable (every target has
+//! them) and stay in `## items` — unless they sit inside a lane module, whose
+//! existence is itself arch-dependent.
+//!
+//! A pre-0.2 snapshot with no sections is migrated on first regeneration:
+//! its arch-specific lines are classified by `infer_arch` and bucketed, so
+//! moving to this format on one machine does not discard what another
+//! recorded.
 //! - **`<crate>.features.txt`** — ADDITIONS from non-excluded, non-`_*`
 //!   features (delta vs the default surface), hidden items excluded. A
 //!   `removed by features` section appears only when enabling features
@@ -438,6 +465,9 @@ impl ApiDoc {
             for (suffix, doc) in files {
                 let path = out_dir.join(format!("{package}{suffix}"));
                 let existing = std::fs::read_to_string(&path).ok();
+                // Carry over per-arch sections this target cannot generate,
+                // and resolve the header's arch summary from the union.
+                let doc = merge_arch_sections(&doc, existing.as_deref());
                 if check {
                     assert_eq!(
                         existing.as_deref(),
@@ -863,7 +893,8 @@ fn snapshot_one(
     let overview = format!(
         "#\n# files: {package}{FILE_MAIN} {} lines (supported surface) | \
          {package}{FILE_FEATURES} {} added (features: {}) | \
-         {package}{FILE_INTERNAL} {} lines ({} hidden + {} excluded-feature)\n",
+         {package}{FILE_INTERNAL} {} lines ({} hidden + {} excluded-feature)\n\
+         # arch-unique surface: {ARCH_SUMMARY_MARK}\n",
         main.total_lines(),
         features.total_lines(),
         if feature_label.is_empty() {
@@ -894,6 +925,10 @@ fn snapshot_one(
     a.push('\n');
     a.push_str(&main.render_summary());
     a.push_str(&main.render_body());
+    if !main.arch_items.is_empty() {
+        a.push_str(ARCH_SHAPES_MARK);
+    }
+    a.push_str(&main.render_arch_section());
     out.push((FILE_MAIN, a));
     eprintln!("{package} [supported]: {} lines", main.total_lines());
 
@@ -973,6 +1008,10 @@ fn snapshot_one(
             }
         }
     }
+    if !features.arch_items.is_empty() {
+        b.push_str(ARCH_SHAPES_MARK);
+    }
+    b.push_str(&features.render_arch_section());
     out.push((FILE_FEATURES, b));
     eprintln!(
         "{package} [+features {feature_label}]: {} added lines",
@@ -1000,6 +1039,10 @@ fn snapshot_one(
         c.push_str(&internal.render_summary());
         c.push_str(&internal.render_body());
     }
+    if !internal.arch_items.is_empty() {
+        c.push_str(ARCH_SHAPES_MARK);
+    }
+    c.push_str(&internal.render_arch_section());
     out.push((FILE_INTERNAL, c));
     eprintln!(
         "{package} [internal]: {} lines ({} hidden, {} excluded-feature)",
@@ -1013,6 +1056,400 @@ fn snapshot_one(
 
 // ---------------------------------------------------------------------------
 // Transformation: raw public-api lines → encoded sections.
+
+// ---------------------------------------------------------------------------
+// Architecture partitioning
+// ---------------------------------------------------------------------------
+//
+// A crate that dispatches SIMD through archmage exposes a *different* public
+// surface per `target_arch`: on x86_64 the `tokens` module carries
+// `X64V3Token`/`X64V4Token` entry points, on aarch64 it carries `NeonToken`
+// ones. A snapshot generated on one machine therefore cannot be verified on
+// another, which is why `ZEN_API_DOC=check` historically only ran on
+// `ubuntu-latest`.
+//
+// The fix is to record the arch-varying lines in a *canonical* form in the
+// portable `## items` section — so that section is byte-identical on every
+// target — and keep the concrete per-target spellings in a separate
+// `## arch surface: <arch>` section that merges rather than overwrites. Each
+// machine refreshes only its own section and preserves the others.
+//
+// `ScalarToken` and the `_scalar` suffix are deliberately NOT listed: they
+// exist on every target, so they are portable surface, not arch-unique.
+
+/// archmage capability tokens that only exist under some `target_arch`.
+const ARCH_TOKENS: &[&str] = &[
+    // arm / aarch64
+    "NeonToken",
+    "NeonAesToken",
+    "NeonCrcToken",
+    "NeonSha3Token",
+    "Arm64V2Token",
+    "Arm64V3Token",
+    // x86 / x86_64
+    "X64V1Token",
+    "X64V2Token",
+    "X64V3Token",
+    "X64V4Token",
+    "X64V4xToken",
+    "X64CryptoToken",
+    "X64V3CryptoToken",
+    "X64V3GfniCryptoToken",
+    "Avx512Fp16Token",
+    // wasm
+    "Wasm128Token",
+    "Wasm128RelaxedToken",
+];
+
+/// Identifier suffixes / path segments naming one ISA tier. Ordered longest
+/// first so `neon_sha3` wins over `neon` and `avx512` over `avx`.
+const ARCH_TIERS: &[&str] = &[
+    "neon_sha3",
+    "neon_aes",
+    "neon_crc",
+    "arm64_v3",
+    "arm64_v2",
+    "wasm128_relaxed",
+    "wasm128",
+    "avx512",
+    "avx2",
+    "sse41",
+    "sse42",
+    "sse2",
+    "neon",
+    "avx",
+    "sse",
+    "v4x",
+    "v4",
+    "v3",
+    "v2",
+    "v1",
+];
+
+/// Path segments naming an architecture family.
+const ARCH_SEGMENTS: &[&str] = &["x86_64", "aarch64", "wasm32", "x86", "arm", "wasm"];
+
+/// Placeholder standing in for whichever ISA tier a target provides.
+const TIER_PLACEHOLDER: &str = "<tier>";
+/// Placeholder standing in for whichever capability token a target provides.
+const TOKEN_PLACEHOLDER: &str = "<ArchToken>";
+/// Placeholder standing in for whichever arch a path segment names.
+const ARCH_PLACEHOLDER: &str = "<arch>";
+/// Placeholder standing in for a SIMD lane-width module segment.
+const LANES_PLACEHOLDER: &str = "<lanes>";
+
+/// Rewrite `xN` lane-width path segments (archmage's `tokens::x4` /`x8`/`x16`)
+/// to a placeholder. Which widths exist is target-dependent — NEON is 4 wide
+/// so aarch64 has only `x4`, while AVX2/AVX-512 give x86 `x8` and `x16` — so
+/// a bare `pub mod tokens::x16` is arch-unique surface even though nothing in
+/// the line names an architecture or an ISA tier.
+fn normalize_lane_segments(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        let is_lane = word.len() >= 2
+            && word.starts_with('x')
+            && word[1..].chars().all(|c| c.is_ascii_digit());
+        out.push_str(if is_lane { LANES_PLACEHOLDER } else { word });
+        word.clear();
+    };
+    for c in line.chars() {
+        if is_ident_char(c) {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
+/// Is `c` part of a Rust identifier?
+fn is_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Replace `needle` with `repl` wherever it appears as a whole identifier
+/// segment — i.e. not flanked by other identifier characters. `before_ok`
+/// additionally allows a leading `_` (so `foo_v3` matches the tier `v3`).
+fn replace_segment(hay: &str, needle: &str, repl: &str, allow_leading_underscore: bool) -> String {
+    let mut out = String::with_capacity(hay.len());
+    let mut rest = hay;
+    while let Some(i) = rest.find(needle) {
+        let (head, tail) = rest.split_at(i);
+        let after = &tail[needle.len()..];
+        let prev = head.chars().next_back();
+        let next = after.chars().next();
+        let prev_ok = match prev {
+            None => true,
+            Some('_') => allow_leading_underscore,
+            Some(c) => !is_ident_char(c),
+        };
+        let next_ok = next.is_none_or(|c| !is_ident_char(c));
+        out.push_str(head);
+        if prev_ok && next_ok {
+            // Consume the separating `_` too, so `foo_v3` -> `foo<tier>`
+            // never leaves a dangling underscore mismatch between arches.
+            if allow_leading_underscore && prev == Some('_') {
+                out.pop();
+                out.push('_');
+            }
+            out.push_str(repl);
+        } else {
+            out.push_str(needle);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Rewrite a public-API line into the form it would take on *any* target,
+/// replacing arch-specific tokens, ISA-tier suffixes and arch path segments
+/// with placeholders. Returns the line unchanged when nothing arch-specific
+/// appears in it.
+fn normalize_arch(line: &str) -> String {
+    let mut out = line.to_owned();
+    for tok in ARCH_TOKENS {
+        out = replace_segment(&out, tok, TOKEN_PLACEHOLDER, false);
+    }
+    for seg in ARCH_SEGMENTS {
+        out = replace_segment(&out, seg, ARCH_PLACEHOLDER, false);
+    }
+    for tier in ARCH_TIERS {
+        out = replace_segment(&out, tier, TIER_PLACEHOLDER, true);
+    }
+    normalize_lane_segments(&out)
+}
+
+/// Does this line's spelling depend on the target architecture?
+fn is_arch_specific(line: &str) -> bool {
+    normalize_arch(line) != line
+}
+
+/// Which target triple's `target_arch` does this arch-specific line belong
+/// to? Used only to migrate pre-partition snapshots, whose concrete lines sit
+/// in the portable body with no section to identify them.
+fn infer_arch(line: &str) -> Option<&'static str> {
+    const X86: &[&str] = &[
+        "X64V1Token",
+        "X64V2Token",
+        "X64V3Token",
+        "X64V4Token",
+        "X64V4xToken",
+        "X64CryptoToken",
+        "X64V3CryptoToken",
+        "X64V3GfniCryptoToken",
+        "Avx512Fp16Token",
+        "avx512",
+        "avx2",
+        "avx",
+        "sse41",
+        "sse42",
+        "sse2",
+        "sse",
+        "x86_64",
+        "x86",
+    ];
+    const ARM: &[&str] = &[
+        "NeonToken",
+        "NeonAesToken",
+        "NeonCrcToken",
+        "NeonSha3Token",
+        "Arm64V2Token",
+        "Arm64V3Token",
+        "neon",
+        "aarch64",
+    ];
+    const WASM: &[&str] = &["Wasm128Token", "Wasm128RelaxedToken", "wasm128", "wasm32"];
+    for (arch, marks) in [("x86_64", X86), ("aarch64", ARM), ("wasm32", WASM)] {
+        if marks
+            .iter()
+            .any(|m| replace_segment(line, m, "\u{0}", true) != line)
+        {
+            return Some(arch);
+        }
+    }
+    // `_v3`/`_v4` style tiers carry no family marker of their own; archmage
+    // only mints those for x86.
+    for t in ["v4x", "v4", "v3", "v2", "v1"] {
+        if replace_segment(line, t, "\u{0}", true) != line {
+            return Some("x86_64");
+        }
+    }
+    None
+}
+
+/// Recover per-arch sections from a pre-partition snapshot by classifying the
+/// arch-specific lines still sitting in its portable body. Without this, the
+/// first regeneration on a different machine would silently drop the concrete
+/// spellings the previous machine recorded.
+fn harvest_legacy_arch_lines(doc: &str) -> BTreeMap<String, Vec<String>> {
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for line in doc.lines() {
+        if line.starts_with('#') || line.starts_with("##") || line.trim().is_empty() {
+            continue;
+        }
+        if !is_arch_specific(line) {
+            continue;
+        }
+        if let Some(arch) = infer_arch(line) {
+            out.entry(arch.to_owned())
+                .or_default()
+                .push(line.to_owned());
+        }
+    }
+    for v in out.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+    out
+}
+
+/// Heading that opens a per-architecture section.
+const ARCH_HEADING: &str = "## arch surface: ";
+/// Heading of the deduplicated cross-arch shape roster.
+const ARCH_SHAPES_HEADING: &str = "## arch shapes";
+/// Substituted with the shape roster once every architecture is known.
+const ARCH_SHAPES_MARK: &str = "{{ARCH_SHAPES}}";
+
+/// Build the deduplicated shape roster from the merged per-arch sections.
+///
+/// Each arch-varying line collapses to its `normalize_arch` form, so the four
+/// spellings of one entry point across four ISA tiers occupy a single row.
+/// The row names which architectures provide it, which is what makes surface
+/// that exists on only one target visible at a glance rather than buried in a
+/// section nobody diffs.
+fn render_arch_shapes(sections: &BTreeMap<String, String>) -> String {
+    let mut shapes: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (arch, body) in sections {
+        for line in body.lines() {
+            if line.starts_with(ARCH_HEADING) || line.trim().is_empty() {
+                continue;
+            }
+            shapes
+                .entry(normalize_arch(line))
+                .or_default()
+                .insert(arch.clone());
+        }
+    }
+    if shapes.is_empty() {
+        return String::new();
+    }
+    let all: BTreeSet<String> = sections.keys().cloned().collect();
+    let shared = shapes.values().filter(|a| **a == all).count();
+    let mut s = format!(
+        "\n{ARCH_SHAPES_HEADING} ({} shapes: {shared} on every recorded arch, {} arch-unique)\n\n",
+        shapes.len(),
+        shapes.len() - shared
+    );
+    for (shape, arches) in &shapes {
+        let who = if *arches == all && all.len() > 1 {
+            "all".to_owned()
+        } else {
+            arches.iter().cloned().collect::<Vec<_>>().join(",")
+        };
+        let _ = writeln!(s, "[{who}] {shape}");
+    }
+    s
+}
+/// Substituted in the header once the merged set of architectures is known.
+const ARCH_SUMMARY_MARK: &str = "{{ARCH_SUMMARY}}";
+
+/// Split a rendered snapshot into (everything before the first per-arch
+/// section, `arch name -> section text`). Sections run to the next
+/// `## arch surface:` heading or end of file, so they must be written last.
+fn split_arch_sections(doc: &str) -> (String, BTreeMap<String, String>) {
+    let Some(first) = doc.find(&format!("\n{ARCH_HEADING}")) else {
+        return (doc.to_owned(), BTreeMap::new());
+    };
+    let (head, rest) = doc.split_at(first);
+    let mut sections = BTreeMap::new();
+    let mut cur: Option<(String, String)> = None;
+    for line in rest.lines() {
+        if let Some(tail) = line.strip_prefix(ARCH_HEADING) {
+            if let Some((k, v)) = cur.take() {
+                sections.insert(k, v);
+            }
+            let arch = tail
+                .split_whitespace()
+                .next()
+                .unwrap_or("unknown")
+                .to_owned();
+            cur = Some((arch, String::new()));
+        }
+        if let Some((_, body)) = cur.as_mut() {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    if let Some((k, v)) = cur.take() {
+        sections.insert(k, v);
+    }
+    (head.to_owned(), sections)
+}
+
+/// Merge a freshly generated snapshot with the committed one: this target's
+/// per-arch section is replaced, every other target's is carried over
+/// untouched, and the header's arch summary is recomputed from the union.
+///
+/// This is what lets `ZEN_API_DOC=check` pass on any machine — each target
+/// verifies the portable body plus its own section, and never fails over a
+/// section it cannot possibly generate.
+fn merge_arch_sections(generated: &str, existing: Option<&str>) -> String {
+    let (head, mut sections) = split_arch_sections(generated);
+    if let Some(prev) = existing {
+        let (prev_head, prev_sections) = split_arch_sections(prev);
+        if prev_sections.is_empty() {
+            // Pre-partition snapshot: its concrete per-arch lines are still
+            // in the body. Recover them so a migration on one machine does
+            // not discard what another machine recorded.
+            for (arch, lines) in harvest_legacy_arch_lines(&prev_head) {
+                if arch == std::env::consts::ARCH {
+                    continue;
+                }
+                let body = format!(
+                    "{ARCH_HEADING}{arch} ({} lines)\n\n{}\n",
+                    lines.len(),
+                    lines.join("\n")
+                );
+                sections.entry(arch).or_insert(body);
+            }
+        }
+        for (arch, body) in prev_sections {
+            // Only carry over OTHER targets; ours was just regenerated.
+            if arch != std::env::consts::ARCH {
+                sections.entry(arch).or_insert(body);
+            }
+        }
+    }
+    let summary = if sections.is_empty() {
+        "(none — portable on every target)".to_owned()
+    } else {
+        sections
+            .iter()
+            .map(|(arch, body)| {
+                let n = body
+                    .lines()
+                    .filter(|l| !l.starts_with(ARCH_HEADING) && !l.trim().is_empty())
+                    .count();
+                format!("{arch} {n}")
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let shapes = render_arch_shapes(&sections);
+    let mut out = head
+        .replace(ARCH_SUMMARY_MARK, &summary)
+        .replace(ARCH_SHAPES_MARK, shapes.trim_start_matches('\n'));
+    for body in sections.values() {
+        out.push('\n');
+        out.push_str(body.trim_end_matches('\n'));
+        out.push('\n');
+    }
+    out
+}
 
 const AUTO_TRAITS: [&str; 6] = [
     "Freeze",
@@ -1064,6 +1501,10 @@ struct Transformed {
     autos: BTreeMap<String, AutoInfo>,
     tally: Tally,
     per_module: BTreeMap<String, usize>,
+    /// Concrete, this-target spellings of every line that `normalize_arch`
+    /// rewrote. Kept out of `items` so the portable section stays identical
+    /// on every architecture; rendered into `## arch surface: <arch>`.
+    arch_items: Vec<String>,
     /// Writer-side gates (`no_file_meta_header`, `no_autotraits_summary`).
     /// Affects `total_lines` and `render_body` only.
     writer_config: WriterConfig,
@@ -1143,6 +1584,25 @@ impl Transformed {
 
     fn roster_entry_count(&self) -> usize {
         self.rosters.values().map(BTreeSet::len).sum()
+    }
+
+    /// The `## arch surface: <arch>` section for the target this run built
+    /// for. Empty when the crate exposes no arch-varying surface, which is
+    /// the common case — 249 of 258 snapshot files in the zen workspace.
+    fn render_arch_section(&self) -> String {
+        if self.arch_items.is_empty() {
+            return String::new();
+        }
+        let mut s = format!(
+            "\n{ARCH_HEADING}{} ({} lines)\n\n",
+            std::env::consts::ARCH,
+            self.arch_items.len()
+        );
+        for l in &self.arch_items {
+            s.push_str(l);
+            s.push('\n');
+        }
+        s
     }
 
     fn render_body(&self) -> String {
@@ -1257,6 +1717,28 @@ fn transform(lines: &[String], crate_ident: &str, writer_config: WriterConfig) -
         .map(|l| strip_crate_prefix(l, crate_ident))
         .collect();
 
+    // Normalize BEFORE anything else reads the lines, so tallies, per-module
+    // counts, rosters and dedupe all see the arch-neutral spelling. The
+    // concrete spellings are kept aside for the per-arch section.
+    // Arch-varying lines leave the portable body ENTIRELY. Normalizing them
+    // in place is not enough: on x86 the `tokens::x16`/`x8` modules exist at
+    // all (AVX-512 / AVX2 widths) while NEON only ever has `x4`, so their
+    // normalized forms still differ per target. Only lines with nothing
+    // arch-specific in them are guaranteed byte-identical everywhere.
+    let mut arch_concrete: Vec<String> = Vec::new();
+    let stripped: Vec<String> = stripped
+        .iter()
+        .filter(|l| {
+            if is_arch_specific(l) {
+                arch_concrete.push((*l).clone());
+                false
+            } else {
+                true
+            }
+        })
+        .cloned()
+        .collect();
+
     let mut t = Transformed {
         writer_config,
         ..Transformed::default()
@@ -1339,6 +1821,9 @@ fn transform(lines: &[String], crate_ident: &str, writer_config: WriterConfig) -
     }
 
     t.items = dedupe_reexport_paths(kept);
+    arch_concrete.sort();
+    arch_concrete.dedup();
+    t.arch_items = arch_concrete;
     t
 }
 
@@ -1909,5 +2394,266 @@ mod tests {
         let api = ApiDoc::new().no_file_meta_header().no_autotraits_summary();
         assert!(api.no_file_meta_header);
         assert!(api.no_autotraits_summary);
+    }
+}
+
+#[cfg(test)]
+mod arch_tests {
+    use super::*;
+
+    /// The x86 and aarch64 spellings of the same entry point must normalize
+    /// to one identical line — that is what makes `## items` arch-neutral.
+    #[test]
+    fn per_arch_spellings_converge() {
+        let pairs = [
+            (
+                "pub fn tokens::x4::srgb_to_linear_v3(archmage::tokens::generated::x86::X64V3Token, [f32; 4]) -> [f32; 4]",
+                "pub fn tokens::x4::srgb_to_linear_neon(archmage::tokens::generated::arm::NeonToken, [f32; 4]) -> [f32; 4]",
+            ),
+            (
+                "pub fn tokens::x16::linear_to_srgb_slice_v4(archmage::tokens::generated::x86::X64V4Token, &mut [f32])",
+                "pub fn tokens::x16::linear_to_srgb_slice_neon(archmage::tokens::generated::arm::NeonToken, &mut [f32])",
+            ),
+            ("pub mod simd::x86_64", "pub mod simd::aarch64"),
+            ("pub use tokens::X64V3Token", "pub use tokens::NeonToken"),
+            (
+                "pub fn simd::x86_64::avx2::forward_dct_8x8_avx2(&[i16; 64])",
+                "pub fn simd::aarch64::neon::forward_dct_8x8_neon(&[i16; 64])",
+            ),
+        ];
+        for (x86, arm) in pairs {
+            assert_eq!(
+                normalize_arch(x86),
+                normalize_arch(arm),
+                "did not converge:\n  {x86}\n  {arm}"
+            );
+            assert!(
+                is_arch_specific(x86),
+                "not detected as arch-specific: {x86}"
+            );
+            assert!(
+                is_arch_specific(arm),
+                "not detected as arch-specific: {arm}"
+            );
+        }
+    }
+
+    /// Portable surface must survive untouched — a false positive here would
+    /// move real API out of the arch-neutral section.
+    #[test]
+    fn portable_lines_are_untouched() {
+        for l in [
+            "pub fn default::srgb_to_linear_slice(&mut [f32])",
+            "pub fn default::linear_to_srgb_u8(f32) -> u8",
+            "pub struct lut::EncodingTable<const N: usize>",
+            "pub const UNPREMUL_ALPHA_THRESHOLD: f32",
+            // ScalarToken and _scalar exist on every target — but only
+            // OUTSIDE a lane module (see `lane_tests`, where the same fn
+            // inside `tokens::x8` is correctly arch-specific).
+            "pub fn default::srgb_to_linear_scalar(archmage::tokens::ScalarToken, [f32; 4]) -> [f32; 4]",
+            // Tokens that merely end in `Token` are not archmage arch tokens.
+            "pub struct StopToken",
+            "pub fn cancel(CancellationToken)",
+            "pub struct FfiCancellationToken",
+            "pub enum UnknownFeatureTransformToken",
+            // Substrings that are not whole segments must not match.
+            "pub fn advanced(usize) -> usize",
+            "pub fn version3_parse(&str)",
+        ] {
+            assert_eq!(normalize_arch(l), l, "wrongly rewritten: {l}");
+            assert!(!is_arch_specific(l), "false positive: {l}");
+        }
+    }
+
+    /// Longest-first tier ordering: `avx512` must not be shredded by `avx`.
+    #[test]
+    fn longer_tiers_win() {
+        let n = normalize_arch("pub fn blur_avx512(&mut [f32])");
+        assert_eq!(n, "pub fn blur_<tier>(&mut [f32])", "got {n}");
+        let n = normalize_arch("pub fn blur_neon_sha3(&mut [f32])");
+        assert_eq!(n, "pub fn blur_<tier>(&mut [f32])", "got {n}");
+    }
+}
+
+#[cfg(test)]
+mod arch_merge_tests {
+    use super::*;
+
+    fn doc(arch: &str, body: &str) -> String {
+        format!(
+            "# demo public API\n# arch-unique surface: {ARCH_SUMMARY_MARK}\n\n\
+             ## items (1 lines)\n\npub fn portable()\n\n\
+             {ARCH_HEADING}{arch} (1 lines)\n\n{body}\n"
+        )
+    }
+
+    /// The whole point: a snapshot carrying another target's section must
+    /// survive regeneration here, and the header must account for both.
+    #[test]
+    fn foreign_arch_section_is_preserved() {
+        let committed = doc("some_other_arch", "pub fn tokens::f_otherisa(OtherToken)");
+        let generated = doc(
+            std::env::consts::ARCH,
+            "pub fn tokens::f_thisisa(ThisToken)",
+        );
+        let merged = merge_arch_sections(&generated, Some(&committed));
+
+        assert!(
+            merged.contains("f_otherisa"),
+            "foreign section dropped:\n{merged}"
+        );
+        assert!(merged.contains("f_thisisa"), "own section lost:\n{merged}");
+        assert!(
+            merged.contains("some_other_arch 1")
+                && merged.contains(&format!("{} 1", std::env::consts::ARCH)),
+            "header summary did not account for both arches:\n{merged}"
+        );
+        assert!(
+            !merged.contains(ARCH_SUMMARY_MARK),
+            "placeholder left unresolved"
+        );
+    }
+
+    /// Regenerating replaces our own section rather than accumulating it.
+    #[test]
+    fn own_arch_section_is_replaced_not_duplicated() {
+        let stale = doc(std::env::consts::ARCH, "pub fn tokens::f_old(ThisToken)");
+        let fresh = doc(std::env::consts::ARCH, "pub fn tokens::f_new(ThisToken)");
+        let merged = merge_arch_sections(&fresh, Some(&stale));
+        assert!(merged.contains("f_new"));
+        assert!(
+            !merged.contains("f_old"),
+            "stale own-arch line survived:\n{merged}"
+        );
+        assert_eq!(
+            merged.matches(ARCH_HEADING).count(),
+            1,
+            "section duplicated:\n{merged}"
+        );
+    }
+
+    /// A crate with no arch-varying surface must render exactly as before,
+    /// with an explicit "portable" note rather than a dangling placeholder.
+    #[test]
+    fn portable_crate_gets_no_sections() {
+        let generated = "# demo\n# arch-unique surface: {{ARCH_SUMMARY}}\n\n## items (1 lines)\n\npub fn portable()\n";
+        let merged = merge_arch_sections(generated, None);
+        assert!(
+            merged.contains("(none — portable on every target)"),
+            "{merged}"
+        );
+        assert!(!merged.contains(ARCH_HEADING));
+    }
+
+    /// Round-trip: merging an already-merged doc with itself is a no-op, so
+    /// `check` cannot fail merely because a file was written twice.
+    #[test]
+    fn merge_is_idempotent() {
+        let committed = doc("some_other_arch", "pub fn tokens::f_otherisa(OtherToken)");
+        let generated = doc(
+            std::env::consts::ARCH,
+            "pub fn tokens::f_thisisa(ThisToken)",
+        );
+        let once = merge_arch_sections(&generated, Some(&committed));
+        let twice = merge_arch_sections(&generated, Some(&once));
+        assert_eq!(once, twice, "merge is not idempotent");
+    }
+}
+
+#[cfg(test)]
+mod arch_migration_tests {
+    use super::*;
+
+    /// A pre-partition snapshot generated on x86 must not lose its concrete
+    /// x86 lines when first regenerated on another target.
+    #[test]
+    fn legacy_x86_snapshot_survives_regeneration_elsewhere() {
+        let legacy = "# linear-srgb public API\n\n## items (3 lines)\n\n\
+             pub fn default::srgb_to_linear_slice(&mut [f32])\n\
+             pub fn tokens::x4::srgb_to_linear_v3(archmage::tokens::generated::x86::X64V3Token, [f32; 4]) -> [f32; 4]\n\
+             pub use tokens::X64V4Token\n";
+        let generated = format!(
+            "# linear-srgb public API\n# arch-unique surface: {ARCH_SUMMARY_MARK}\n\n\
+             ## items (2 lines)\n\n\
+             pub fn default::srgb_to_linear_slice(&mut [f32])\n\
+             pub fn tokens::x4::srgb_to_linear_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, [f32; 4]) -> [f32; 4]\n\
+             \n{ARCH_HEADING}{} (1 lines)\n\n\
+             pub fn tokens::x4::srgb_to_linear_neon(archmage::tokens::generated::arm::NeonToken, [f32; 4]) -> [f32; 4]\n",
+            std::env::consts::ARCH
+        );
+        let merged = merge_arch_sections(&generated, Some(legacy));
+        assert!(
+            merged.contains("srgb_to_linear_v3"),
+            "legacy x86 line dropped:\n{merged}"
+        );
+        assert!(
+            merged.contains("X64V4Token"),
+            "legacy x86 re-export dropped:\n{merged}"
+        );
+        assert!(merged.contains("x86_64 2"), "header miscounted:\n{merged}");
+    }
+
+    #[test]
+    fn infer_arch_classifies_the_real_vocabulary() {
+        for (line, want) in [
+            ("pub use tokens::X64V3Token", Some("x86_64")),
+            ("pub fn f_avx512(&mut [f32])", Some("x86_64")),
+            ("pub fn f_v4(X64V4Token)", Some("x86_64")),
+            ("pub mod simd::aarch64", Some("aarch64")),
+            ("pub fn f_neon(NeonToken)", Some("aarch64")),
+            ("pub fn f_wasm128()", Some("wasm32")),
+            ("pub fn default::srgb_to_linear_slice(&mut [f32])", None),
+            ("pub struct StopToken", None),
+        ] {
+            assert_eq!(infer_arch(line), want, "for: {line}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod lane_tests {
+    use super::*;
+
+    /// Lane-width modules are arch-unique: aarch64 has only `x4`, x86 also
+    /// has `x8` and `x16`. A bare module decl names no arch or tier, so it
+    /// needs its own rule or it leaks into the portable body.
+    #[test]
+    fn lane_width_modules_are_arch_specific() {
+        for l in [
+            "pub mod tokens::x16",
+            "pub mod tokens::x8",
+            "pub mod tokens::x4",
+        ] {
+            assert!(is_arch_specific(l), "missed lane module: {l}");
+        }
+        assert_eq!(
+            normalize_arch("pub mod tokens::x16"),
+            "pub mod tokens::<lanes>"
+        );
+        assert_eq!(
+            normalize_arch("pub mod tokens::x4"),
+            "pub mod tokens::<lanes>"
+        );
+    }
+
+    /// A `_scalar` fn inside a lane module is still arch-unique, because the
+    /// module it lives in may not exist on another target.
+    #[test]
+    fn scalar_fn_in_a_lane_module_is_arch_specific() {
+        let l = "pub fn tokens::x8::linear_to_srgb_u16_scalar(archmage::tokens::ScalarToken, [f32; 8]) -> [u16; 8]";
+        assert!(is_arch_specific(l));
+    }
+
+    /// Identifiers that merely start with `x` must not be mistaken for lanes.
+    #[test]
+    fn non_lane_identifiers_survive() {
+        for l in [
+            "pub fn xyz(usize)",
+            "pub struct x",
+            "pub fn x2y(usize)",
+            "pub fn default::srgb_to_linear_slice(&mut [f32])",
+        ] {
+            assert_eq!(normalize_lane_segments(l), l, "wrongly rewritten: {l}");
+        }
     }
 }

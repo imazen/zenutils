@@ -56,6 +56,37 @@ All notable changes to crates in this workspace are documented here, following
 ### [Unreleased]
 
 #### Added
+- **Architecture-partitioned snapshots, so `ZEN_API_DOC=check` can run on any
+  target.** A crate dispatching SIMD through archmage has a different public
+  surface per `target_arch` — x86_64 carries `X64V3Token`/`X64V4Token` entry
+  points and `x8`/`x16` lane modules, aarch64 carries `NeonToken` and only
+  `x4`. A snapshot generated on one machine could therefore never be verified
+  on another, which is why the check only ever ran on `ubuntu-latest` and why
+  mixed-arch snapshot sets (zenjxl-decoder, mozjpeg-rs) exist that no single
+  machine can reproduce. Snapshots now carry three parts:
+  - `## items` — only lines with nothing arch-specific in them, so it is
+    byte-identical on every target. VERIFIED: the aarch64-generated body for
+    linear-srgb is byte-identical to the committed x86_64 body once the same
+    filter is applied to it (79 lines each).
+  - `## arch surface: <arch>` — that target's concrete spellings. Regeneration
+    rewrites only the running machine's section and preserves every other, so
+    the file accumulates architectures instead of flip-flopping.
+  - `## arch shapes` — the sections deduplicated: the per-tier spellings of one
+    entry point collapse to a single row tagged `[all]` or `[x86_64]`, and the
+    header gains `# arch-unique surface: aarch64 15 | x86_64 41`.
+- Pre-0.2 snapshots are migrated on first regeneration: arch-specific lines
+  still sitting in the portable body are classified by `infer_arch` and
+  bucketed, so adopting the format on one machine does not discard what
+  another machine recorded.
+- Lane-width modules (`tokens::x4`/`x8`/`x16`) count as arch-specific: which
+  widths exist is target-dependent, so a bare `pub mod tokens::x16` is
+  arch-unique surface even though nothing in the line names an arch or tier.
+- 12 new unit tests covering normalization convergence, false positives
+  (`StopToken`, `CancellationToken` and `_scalar` must stay portable),
+  longest-tier-first matching, cross-arch merge, merge idempotence, and legacy
+  migration.
+- `cargo semver-checks`: no semver update required — the Rust API is unchanged,
+  only the emitted file format. Hence 0.1.2, not a minor bump.
 - `ApiDoc::no_file_meta_header()` and `ApiDoc::no_autotraits_summary()` —
   two opt-in builder gates that suppress lines in the rendered snapshots
   which churn on every regen without carrying semver signal. The first

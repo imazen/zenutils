@@ -7,6 +7,7 @@
 # DO NOT EDIT BY HAND — commit regenerated changes with the code.
 #
 # files: zenutils-apidoc.txt 19 lines (supported surface) | zenutils-apidoc.features.txt 0 added (features: none) | zenutils-apidoc.internal.txt 0 lines (0 hidden + 0 excluded-feature)
+# arch-unique surface: (none — portable on every target)
 
 ## summary
 #
