@@ -1,0 +1,80 @@
+# api-guard — reusable workflow. On a PR, diffs the committed
+# docs/public-api/*.txt snapshots between base and head and posts ONE
+# advisory comment listing added/removed surface items plus policy flags
+# (pub fields, unsealed traits, missing docs/non_exhaustive, re-export
+# growth). Never fails the build — report-only per org policy.
+#
+# Consumer repo wiring (the whole caller):
+#
+#   name: api-guard
+#   on: pull_request
+#   permissions: { contents: read, pull-requests: write }
+#   jobs:
+#     api-guard:
+#       uses: imazen/zenutils/.github/workflows/api-guard.yml@main
+name: api-guard
+
+on:
+  workflow_call:
+    inputs:
+      kit-ref:
+        description: zenutils ref the checker scripts come from
+        type: string
+        default: main
+      base-sha:
+        description: diff base (defaults to the PR base sha)
+        type: string
+        default: ""
+
+jobs:
+  api-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Fetch quality kit (zenutils @ ${{ inputs.kit-ref }})
+        uses: actions/checkout@v7
+        with:
+          repository: imazen/zenutils
+          ref: ${{ inputs.kit-ref }}
+          path: .zenutils
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Compute API surface diff
+        env:
+          BASE: ${{ inputs.base-sha || github.event.pull_request.base.sha
+            || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          python3 .zenutils/quality/api-diff.py \
+            --root . --base "$BASE" --head "$HEAD" --comment /tmp/api-guard.md
+      - name: Post or update the advisory comment
+        # forked-PR tokens are read-only — a failed comment must not red the
+        # job (advisory-only policy); the log step below always shows the report
+        continue-on-error: true
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -e
+          repo="${{ github.repository }}"
+          existing=$(gh api "repos/$repo/issues/$PR/comments" --paginate \
+            --jq '.[] | select(.body | contains("<!-- api-guard -->")) | .id' \
+            | tail -1 || true)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$repo/issues/comments/$existing" \
+              -F body=@/tmp/api-guard.md >/dev/null
+            echo "updated comment $existing"
+          else
+            gh api "repos/$repo/issues/$PR/comments" \
+              -F body=@/tmp/api-guard.md >/dev/null
+            echo "posted new comment"
+          fi
+      - name: Show report in log (fallback for forked-PR token limits)
+        run: cat /tmp/api-guard.md

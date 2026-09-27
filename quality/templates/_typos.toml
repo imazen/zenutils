@@ -1,0 +1,36 @@
+# _typos.toml — typos-cli config template for zen repos. Extend
+# [default.extend-words] with domain vocabulary that trips the dictionary
+# (identifiers it must NOT "fix"), not with real misspellings.
+
+[files]
+extend-exclude = [
+    "CHANGELOG.md",        # append-only history; typos in old entries stay
+    "Cargo.lock",
+    "*.min.js",
+    "docs/public-api/*.txt",
+    "benchmarks/",
+]
+
+[default.extend-identifiers]
+# Example entries (edit per repo):
+# Eotf = "Eotf"          # we write EOTF/Eotf, dictionary wants "Etof"
+# premiul = "premiul"    # matlab-era variable names in ported code
+
+[default.extend-words]
+# Domain vocabulary the english dictionary mis-flags:
+dssim = "dssim"
+ssim = "ssim"
+ssimulacra = "ssimulacra"
+butteraugli = "butteraugli"
+cvvdp = "cvvdp"
+hdrvdp = "hdrvdp"
+jxl = "jxl"
+avif = "avif"
+vastai = "vastai"
+hetzner = "hetzner"
+runpod = "runpod"
+ghcr = "ghcr"
+eotf = "eotf"
+oetf = "oetf"
+parquet = "parquet"
+identicons = "identicons"

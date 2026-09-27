@@ -1,0 +1,52 @@
+# workspace-lints.toml — paste this block into the ROOT Cargo.toml, then add
+#     [lints]
+#     workspace = true
+# to every member crate's Cargo.toml (a one-line table; `scripts` in this
+# directory include a helper that does the insertion mechanically).
+#
+# Levels: warn = advisory (shows in `just quality` + PR diffs; per org policy
+# lint findings are fixed forward, never CI-gated). Promote a lint to "deny"
+# per-crate only after that crate is clean of it.
+#
+# Baseline tuned for the zen codebase family: algorithm ports carry
+# single-letter math names, long C-derived constants, and dense numeric
+# casts, so the pedantic/nursery groups stay OFF and the noisy all-group
+# cast/doc lints are allowed individually. zenjpeg's production table is
+# the reference this derives from.
+
+[workspace.lints.rust]
+# pub items unreachable from outside the crate — the machine-enforced form
+# of AGENTS.md's "default new items to pub(crate)" rule. Flagged in reports;
+# fix by tightening visibility.
+unreachable_pub = "warn"
+# Catch cfg(feature = "...") typos and custom cfgs. Add the crate's custom
+# cfgs here, e.g. check-cfg = ['cfg(feature, values("avx512"))'].
+unexpected_cfgs = { level = "warn", check-cfg = [] }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# pedantic/nursery stay off: too noisy for ported numeric code. Enable
+# selectively per-crate once `all` is clean.
+
+# -- ported-code noise, allowed workspace-wide (zenjpeg's proven list) ----
+cast_possible_truncation = "allow"  # u8/f32 dimension math everywhere
+cast_precision_loss = "allow"       # f32/f64 conversions
+cast_sign_loss = "allow"            # usize -> signed in C-derived arithmetic
+cast_lossless = "allow"
+excessive_precision = "allow"       # reference constants keep full precision
+unreadable_literal = "allow"        # long C++-ported constants
+approx_constant = "allow"           # exact reference values, not PI approx
+missing_panics_doc = "allow"        # doc backlog; see NO-DOC flags instead
+missing_errors_doc = "allow"
+must_use_candidate = "allow"        # too noisy for incremental value
+doc_markdown = "allow"              # backtick prose style, not correctness
+uninlined_format_args = "allow"     # style only; ports keep format!("{}", x)
+items_after_statements = "allow"    # common shape in ported functions
+unnecessary_wraps = "allow"         # Result uniformity across fallible APIs
+unused_self = "allow"               # builder/dispatch seam stability
+needless_range_loop = "allow"       # indexed loops match ported code shape
+too_many_arguments = "allow"        # see clippy.toml threshold (16)
+type_complexity = "allow"           # GPU/cubecl signatures are legitimately deep
+# Unsafe documentation: warn now, promote to deny per-crate when clean.
+missing_safety_doc = "warn"
+undocumented_unsafe_blocks = "warn"

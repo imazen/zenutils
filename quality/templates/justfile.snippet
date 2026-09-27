@@ -1,0 +1,44 @@
+# --- quality kit recipes (zenutils) -------------------------------------
+# Resolves the kit three ways, first hit wins:
+#   1. ZENUTILS env var            (e.g. ZENUTILS=~/work/zen/zenutils just quality)
+#   2. a zenutils clone beside the repo (../zenutils — the workspace layout)
+#   3. a pinned clone under .quality-kit/ (make it: `just quality-bootstrap`)
+ZENUTILS := env_var_or_default("ZENUTILS", justfile_directory() / "../zenutils")
+QUALITY := ZENUTILS / "quality"
+
+# Advisory quality sweep: fmt, clippy census, API exposure, stale docs,
+# unused deps, cargo deny, typos, complexity hotspots, shellcheck.
+# `just quality` or `just quality-quick`.
+quality *flags:
+    @q="{{QUALITY}}"; [ -x "$q/quality.sh" ] || q="{{justfile_directory()}}/.quality-kit/quality"; \
+    [ -x "$q/quality.sh" ] || { echo "kit not found — run: just quality-bootstrap"; exit 2; }; \
+    "$q/quality.sh" --root "{{justfile_directory()}}" {{flags}}
+
+quality-quick:
+    @just quality --quick
+
+# Clone the kit beside the repo (or refresh .quality-kit to a pinned rev).
+quality-bootstrap:
+    @if [ -d "{{justfile_directory()}}/../zenutils/quality" ]; then \
+      echo "kit found at ../zenutils"; \
+    else \
+      git clone --quiet https://github.com/imazen/zenutils \
+        "{{justfile_directory()}}/.quality-kit" && \
+      echo "cloned kit into .quality-kit (add it to .gitignore)"; \
+    fi
+
+# Public-API exposure/YAGNI report only.
+api-surface *flags:
+    @q="{{QUALITY}}"; [ -d "$q" ] || q="{{justfile_directory()}}/.quality-kit/quality"; \
+    python3 "$q/api-report.py" "{{justfile_directory()}}" {{flags}}
+
+# Stale-doc scan only (dead links, dead script refs, dead just recipes).
+docs-check *flags:
+    @q="{{QUALITY}}"; [ -d "$q" ] || q="{{justfile_directory()}}/.quality-kit/quality"; \
+    python3 "$q/check-stale-docs.py" "{{justfile_directory()}}" {{flags}}
+
+# Statement coverage for the default-feature test suite (llvm-cov).
+# Advisory: informs refactoring risk, does not gate. Writes lcov.info.
+coverage:
+    cargo llvm-cov --workspace --lcov --output-path lcov.info
+    @cargo llvm-cov report --summary-only 2>/dev/null | tail -15 || true

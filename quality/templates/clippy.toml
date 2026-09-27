@@ -1,0 +1,28 @@
+# clippy.toml — clippy *behavioral* thresholds (lint levels live in the
+# root Cargo.toml's [workspace.lints] table; this file only tunes the
+# lints that take parameters). Derived from zenrav1e's 2026 settings.
+#
+# Per-repo adjustments belong in the repo's own clippy.toml — if you tune
+# a value here, mirror the change back to zenutils/quality/templates/.
+
+# Cognitive complexity (clippy::cognitive_complexity) — warn above this.
+# 40 is the org's working ceiling; below ~25 is the healthy target.
+cognitive-complexity-threshold = 40
+
+# clippy::too_many_arguments — ported codec/metric signatures run long.
+too-many-arguments-threshold = 16
+
+# clippy::trivially-copy-pass-by-ref — 16 bytes = two registers.
+trivial-copy-size-limit = 16
+
+# Don't lint test-only noise.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+
+# Lint inside #[doc(hidden)] items too — hidden != allowed to rot.
+check-private-items = true
+
+# Set to the workspace rust-version so suggestions stay MSRV-compatible.
+# msrv = "1.85"
