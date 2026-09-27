@@ -53,11 +53,13 @@ else note "rustfmt not installed"; fi
 if [ "$QUICK" = 0 ]; then
 sec "clippy — warning census (advisory)"
   if cargo clippy --version >/dev/null 2>&1; then
-    tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT
+    tmp=$(mktemp); err=$(mktemp); trap 'rm -f "$tmp" "$err"' EXIT
     # --locked: a read-only sweep must never rewrite Cargo.lock (zenmetrics
-    # rule: the lock is regenerated only via scripts/ci/lock.sh).
+    # rule: the lock is regenerated only via scripts/ci/lock.sh). If the
+    # committed lock is stale, cargo refuses here — surface that instead of
+    # pretending the census was clean.
     cargo clippy --locked --workspace --all-targets --message-format json \
-        -j "$JOBS" 2>/dev/null \
+        -j "$JOBS" 2>"$err" \
       | python3 - "$tmp" <<'PY'
 import json, sys, collections
 warns = collections.Counter(); errors = 0; files = set()
@@ -79,7 +81,13 @@ for k, v in warns.most_common(15):
     print(f"    {v:>5}  {k}")
 open(sys.argv[1], "w").write(str(tot))
 PY
-    summary="$summary clippy:$(cat "$tmp" 2>/dev/null || echo '?')warn"
+    if [ ! -s "$tmp" ] || grep -q '^error' "$err"; then
+      note "clippy failed — first stderr lines:"
+      grep -v '^$' "$err" | head -4 | sed 's/^/    /'
+      summary="$summary clippy:failed"
+    else
+      summary="$summary clippy:$(cat "$tmp")warn"
+    fi
   else note "cargo-clippy missing"; fi
 fi
 
