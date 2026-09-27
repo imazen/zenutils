@@ -15,6 +15,13 @@
 # the reference this derives from.
 
 [workspace.lints.rust]
+# unsafe belongs in the verified primitive crates (magetypes/archmage/
+# disjointmut). FORBIDDEN — members cannot override it (cargo rejects
+# per-crate overrides under `workspace = true`, and `forbid` ignores
+# `#![allow]`). A crate that still carries unsafe debt must instead drop
+# `workspace = true` and paste a *mirror* of this whole block plus
+# `unsafe_code = "allow"` — mark it as debt to remove, not a license.
+unsafe_code = "forbid"
 # pub items unreachable from outside the crate — the machine-enforced form
 # of AGENTS.md's "default new items to pub(crate)" rule. Flagged in reports;
 # fix by tightening visibility.
