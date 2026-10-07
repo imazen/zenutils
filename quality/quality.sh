@@ -58,9 +58,12 @@ sec "clippy — warning census (advisory)"
     # rule: the lock is regenerated only via scripts/ci/lock.sh). If the
     # committed lock is stale, cargo refuses here — surface that instead of
     # pretending the census was clean.
+    # The census script arrives on fd 3 so stdin stays the clippy pipe. (With
+    # `python3 - <<PY` the heredoc replaced the pipe as stdin: python read no
+    # JSON, the census was always 0, and cargo died on EPIPE.)
     cargo clippy --locked --workspace --all-targets --message-format json \
         -j "$JOBS" 2>"$err" \
-      | python3 - "$tmp" <<'PY'
+      | python3 /dev/fd/3 "$tmp" 3<<'PY'
 import json, sys, collections
 warns = collections.Counter(); errors = 0; files = set()
 for line in sys.stdin:
