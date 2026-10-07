@@ -8,9 +8,13 @@ All notable changes to crates in this workspace are documented here, following
 ### [Unreleased]
 
 #### Changed
+- CI: `actions/checkout` v6 → v7 (3e222d3). v7 refuses fork-PR checkouts under `pull_request_target`/`workflow_run`; `ci.yml` uses neither.
+- Dependencies: `public-api` 0.52.1 → 0.52.2 and `serde_json` 1.0.150 → 1.0.151 (compatible floors), lock refreshed within requirements; no incompatible upgrades available (b42feab).
 - Refreshed `Cargo.lock` within the existing requirements (d83b238). Unconstrained `cargo update` is safe here because the workspace has no zen-family dependency at all — the only `zen*` entries in the lock are its own two members — so every package moved is third-party. Thirteen moved: `libc` 0.2.186 → 0.2.189, `memchr` 2.8.2 → 2.8.3, `serde` 1.0.228 → 1.0.229, `serde_json` 1.0.150 → 1.0.151, `syn` 2.0.117 → 3.0.4, `thiserror` 2.0.18 → 2.0.20, `rustdoc-types` 0.57.3 → 0.57.4, plus the proc-macro chain. No requirement and no crate version changed. Nothing was behind: `public-api` 0.52.1, `rustup-toolchain` 0.1.10 and `serde_json` are each already at their latest published version, and all three requirements are already full `x.y.z`.
 
 #### Fixed
+- **quality kit: the clippy warning census counted nothing.** `quality.sh` piped `cargo clippy --message-format json` into `python3 - <<'PY'`; the heredoc replaced the pipe as stdin, so the census always printed "0 warnings across 0 files" and cargo died on EPIPE ("clippy failed: Broken pipe"). The script now arrives on fd 3 (162f691).
+- **quality kit: scans skip the kit's own `.quality-kit/` clone and `target/`.** With the kit bootstrapped in-repo, the stale-doc scan and `api-report.py` reported the kit's own files as the repo's, and the cargo-crap stage scored `target/package/` copies (4382561).
 - **Pushes to `main` now cancel their superseded CI runs.** `ci.yml` keyed its
   concurrency group on `${{ github.head_ref || github.run_id }}`.
   `github.head_ref` is populated only for `pull_request` events, so on a push it
@@ -54,6 +58,9 @@ All notable changes to crates in this workspace are documented here, following
 ## zenutils-apidoc
 
 ### [Unreleased]
+
+#### Fixed
+- `legacy_x86_snapshot_survives_regeneration_elsewhere` failed on every x86_64 host (red CI on ubuntu-latest, windows-latest and macos-26-intel since 2026-09-27): `merge_arch_sections` picks the section to rewrite from the host arch, so on x86_64 the test's "elsewhere" was an x86 regeneration. The merge now takes the regenerating target explicitly (`merge_arch_sections_on`); the test names aarch64. Assertions unchanged (993c864).
 
 #### Added
 - **Architecture-partitioned snapshots, so `ZEN_API_DOC=check` can run on any
