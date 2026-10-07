@@ -1398,6 +1398,12 @@ fn split_arch_sections(doc: &str) -> (String, BTreeMap<String, String>) {
 /// verifies the portable body plus its own section, and never fails over a
 /// section it cannot possibly generate.
 fn merge_arch_sections(generated: &str, existing: Option<&str>) -> String {
+    merge_arch_sections_on(generated, existing, std::env::consts::ARCH)
+}
+
+/// [`merge_arch_sections`] with the regenerating target named explicitly, so
+/// tests can exercise a regeneration on a target other than the host.
+fn merge_arch_sections_on(generated: &str, existing: Option<&str>, host_arch: &str) -> String {
     let (head, mut sections) = split_arch_sections(generated);
     if let Some(prev) = existing {
         let (prev_head, prev_sections) = split_arch_sections(prev);
@@ -1406,7 +1412,7 @@ fn merge_arch_sections(generated: &str, existing: Option<&str>) -> String {
             // in the body. Recover them so a migration on one machine does
             // not discard what another machine recorded.
             for (arch, lines) in harvest_legacy_arch_lines(&prev_head) {
-                if arch == std::env::consts::ARCH {
+                if arch == host_arch {
                     continue;
                 }
                 let body = format!(
@@ -1419,7 +1425,7 @@ fn merge_arch_sections(generated: &str, existing: Option<&str>) -> String {
         }
         for (arch, body) in prev_sections {
             // Only carry over OTHER targets; ours was just regenerated.
-            if arch != std::env::consts::ARCH {
+            if arch != host_arch {
                 sections.entry(arch).or_insert(body);
             }
         }
@@ -2579,9 +2585,12 @@ mod arch_migration_tests {
              pub fn tokens::x4::srgb_to_linear_<tier>(archmage::tokens::generated::<arch>::<ArchToken>, [f32; 4]) -> [f32; 4]\n\
              \n{ARCH_HEADING}{} (1 lines)\n\n\
              pub fn tokens::x4::srgb_to_linear_neon(archmage::tokens::generated::arm::NeonToken, [f32; 4]) -> [f32; 4]\n",
-            std::env::consts::ARCH
+            "aarch64"
         );
-        let merged = merge_arch_sections(&generated, Some(legacy));
+        // Regenerate on aarch64 explicitly: on an x86_64 host the plain
+        // merge treats the run as an x86 regeneration, which is not the
+        // scenario under test (and failed CI on every x86_64 runner).
+        let merged = merge_arch_sections_on(&generated, Some(legacy), "aarch64");
         assert!(
             merged.contains("srgb_to_linear_v3"),
             "legacy x86 line dropped:\n{merged}"
