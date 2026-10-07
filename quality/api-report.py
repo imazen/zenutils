@@ -26,7 +26,7 @@ import subprocess
 import sys
 
 SKIP_DIRS = {".git", ".jj", "target", "node_modules", "tests", "benches",
-             "examples"}
+             "examples", ".quality-kit"}
 COMMON_IDENTS = {
     "new", "default", "Error", "Config", "Options", "Settings", "Params",
     "Builder", "Result", "from", "into", "clone", "fmt", "write", "read",
@@ -114,6 +114,8 @@ def glob_crates(root):
         if not os.path.isdir(d):
             continue
         for entry in sorted(os.listdir(d)):
+            if entry in SKIP_DIRS:
+                continue
             p = os.path.join(d, entry)
             if os.path.isfile(os.path.join(p, "Cargo.toml")):
                 out.append(p)

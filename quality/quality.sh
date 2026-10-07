@@ -123,7 +123,9 @@ else note "install typos-cli (cargo binstall typos-cli) to enable"; fi
 
 sec "complexity hotspots"
 if cargo crap --version >/dev/null 2>&1; then
-  cargo crap --top 12 2>/dev/null | tail -15 || note "crap run failed"
+  # target/ holds `cargo package` copies of the sources; .quality-kit/ is this kit's own clone
+  cargo crap --top 12 --exclude 'target/**' --exclude '.quality-kit/**' 2>/dev/null | tail -15 \
+    || note "crap run failed"
 elif command -v cccc >/dev/null 2>&1; then
   cccc . --lang rust --top 12 2>/dev/null | tail -15 || note "cccc failed"
 else note "install cargo-crap or cccc for per-function complexity"; fi

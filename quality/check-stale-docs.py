@@ -35,7 +35,8 @@ import sys
 import urllib.parse
 
 SKIP_DIRS = {".git", ".jj", "target", "node_modules", "vendor",
-             "__pycache__", ".cargo", "dist", "build"}
+             "__pycache__", ".cargo", "dist", "build",
+             ".quality-kit"}  # the kit's own in-repo clone (just quality-bootstrap)
 SNAPSHOT_RE = re.compile(r"(19|20)\d\d[-_]\d\d[-_]\d\d")
 BANNER_RE = re.compile(r"HISTORICAL|Status:\s*(HISTORICAL|Frozen|Concluded|Superseded)"
                        r"|frozen 20\d\d", re.I)
