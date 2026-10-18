@@ -34,6 +34,10 @@ All notable changes to crates in this workspace are documented here, following
   8a5a290). (a632731)
 
 #### Added
+- `quality/perf-inventory.py` and `just perf-inventory`: read-only inventory of
+  tracked Rust performance harnesses and Coz instrumentation, with revision and
+  dirty-tree provenance. `docs/causal-profiling.md` describes profile validation
+  and exact-output performance comparisons (ed0e044b).
 - `docs/readme-conventions.md` — single source of truth for zen* README/onboarding
   conventions: split README.md (GitHub, full badges) + generated README.crates.md
   (crates.io, CI badge only), the crosslink-footer standard, the one-shot
