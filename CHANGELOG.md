@@ -8,6 +8,7 @@ All notable changes to crates in this workspace are documented here, following
 ### [Unreleased]
 
 #### Changed
+- Crate registry: 19 active public repositories added to `docs/zen-crates.tsv` (zenjpegai; zenav1-svt, zenav1-aom, jxl-gpu; zenhash; zensr; squintly, codec-eval; all-the-images, zentrain-corpus; nine tools). READMEs are not re-rendered yet.
 - CI: `actions/checkout` v6 → v7 (3e222d3). v7 refuses fork-PR checkouts under `pull_request_target`/`workflow_run`; `ci.yml` uses neither.
 - Dependencies: `public-api` 0.52.1 → 0.52.2 and `serde_json` 1.0.150 → 1.0.151 (compatible floors), lock refreshed within requirements; no incompatible upgrades available (b42feab).
 - Refreshed `Cargo.lock` within the existing requirements (d83b238). Unconstrained `cargo update` is safe here because the workspace has no zen-family dependency at all — the only `zen*` entries in the lock are its own two members — so every package moved is third-party. Thirteen moved: `libc` 0.2.186 → 0.2.189, `memchr` 2.8.2 → 2.8.3, `serde` 1.0.228 → 1.0.229, `serde_json` 1.0.150 → 1.0.151, `syn` 2.0.117 → 3.0.4, `thiserror` 2.0.18 → 2.0.20, `rustdoc-types` 0.57.3 → 0.57.4, plus the proc-macro chain. No requirement and no crate version changed. Nothing was behind: `public-api` 0.52.1, `rustup-toolchain` 0.1.10 and `serde_json` are each already at their latest published version, and all three requirements are already full `x.y.z`.

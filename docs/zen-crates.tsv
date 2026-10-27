@@ -28,20 +28,26 @@ zensvg	codecs	https://github.com/imazen/zenextras	SVG render + lossless optimiza
 zenjp2	codecs	https://github.com/imazen/zenextras	JPEG 2000 decoder via hayro (in zenextras)
 zenraw	codecs	https://github.com/imazen/zenraw	Camera RAW/DNG decoder, linear f32 output
 ultrahdr	codecs	https://github.com/imazen/ultrahdr	Ultra HDR (JPEG + gain map) math, metadata, tone mapping
+zenjpegai	codecs	https://github.com/imazen/zenjpegai	JPEG AI (ISO/IEC 6048-1) learned image codec in safe Rust
 zenrav1e	internals	https://github.com/imazen/zenrav1e	AV1 still/animated image encoder (rav1e fork)
 rav1d-safe	internals	https://github.com/imazen/rav1d-safe	Safe SIMD AV1 decoder (rav1d fork, no C FFI)
 zenravif	internals	https://github.com/imazen/cavif-rs	AVIF encoder with still image, animation, HDR, and metadata support
 zenavif-parse	internals	https://github.com/imazen/zenavif	Zero-copy AVIF/ISOBMFF container parser (in zenavif)
 zenavif-serialize	internals	https://github.com/imazen/zenavif	AVIF container serializer (HEIF/MIAF muxer) (in zenavif)
+zenav1-svt	internals	https://github.com/imazen/zenav1-svt	Safe Rust AV1 encoder, an algorithm-for-algorithm port of SVT-AV1
+zenav1-aom	internals	https://github.com/imazen/zenav1-aom	Pure-Rust libaom: AV1 encoder and decoder validated against C libaom
+jxl-gpu	internals	https://github.com/imazen/jxl-gpu	GPU JPEG XL encoding kernels via CubeCL
 zenflate	compression	https://github.com/imazen/zenflate	Pure-Rust DEFLATE/zlib/gzip, streaming + parallel
 zenzop	compression	https://github.com/imazen/zenzop	Faster Zopfli fork with ECT-derived optimizations
 zenzstd	compression	https://github.com/imazen/zenzstd	Pure-Rust Zstandard, forbid(unsafe), no_std+alloc
+zenhash	compression	https://github.com/imazen/zenhash	xxHash 3 with forbid(unsafe_code)
 zenresize	process	https://github.com/imazen/zenresize	Resampling with 31 filters, streaming, SIMD
 zenquant	process	https://github.com/imazen/zenquant	Perceptual palette quantizer in OKLab
 zenblend	process	https://github.com/imazen/zenblend	Porter-Duff + artistic blends on premultiplied linear f32
 zenfilters	process	https://github.com/imazen/zenpipe	Photo adjustments on planar Oklab f32 with SIMD (in zenpipe)
 zensally	process	https://github.com/imazen/zensally	Face detection + saliency maps for smart cropping
 zentone	process	https://github.com/imazen/zentone	HDR→SDR tone-mapping curves + gain-map splitter
+zensr	process	https://github.com/imazen/zensr	Super-resolution and JPEG artifact repair for web images
 zenpixels	color	https://github.com/imazen/zenpixels	Pixel format/descriptor/buffer interchange types
 zenpixels-convert	color	https://github.com/imazen/zenpixels	Transfer-aware pixel conversion + gamut mapping
 linear-srgb	color	https://github.com/imazen/linear-srgb	Fast linear↔sRGB conversion (f32/f64/u8/u16) with SIMD
@@ -59,12 +65,16 @@ fast-ssim2	metrics	https://github.com/imazen/fast-ssim2	Fast SSIMULACRA2 with SI
 butteraugli	metrics	https://github.com/imazen/butteraugli	Butteraugli perceptual image difference
 zenmetrics	metrics	https://github.com/imazen/zenmetrics	GPU metric crates + zen-metrics CLI + zenfleet job system
 resamplescope-rs	metrics	https://github.com/imazen/resamplescope-rs	Resampling filter analysis + visualization
+squintly	metrics	https://github.com/imazen/squintly	Browser-based pairwise psychovisual data collection
+codec-eval	metrics	https://github.com/imazen/codec-eval	Codec evaluation harnesses and comparison tools
 zenanalyze	ml	https://github.com/imazen/zenanalyze	Image-feature extraction for adaptive codec decisions
 zenpredict	ml	https://github.com/imazen/zenanalyze	Zero-copy MLP runtime + ZNPR model parser
 zenpicker	ml	https://github.com/imazen/zenanalyze	Codec-family meta-picker over zenpredict
 zenanalyze-api	ml	https://github.com/imazen/zenanalyze	Version-unifying feature contract (Request/Offer) shared across the picker tree (in zenanalyze)
 codec-corpus	corpora	https://github.com/imazen/codec-corpus	Runtime API for downloading and caching codec test-image datasets
 imazen-26	corpora	https://github.com/imazen/imazen-26	The imazen-26 image corpus: provenance manifests, canonical split, variant-set registry, generation tooling
+all-the-images	corpora	https://github.com/imazen/all-the-images	Reproducible multi-codec test corpus
+zentrain-corpus	corpora	https://github.com/imazen/zentrain-corpus	Frozen training corpus for the codec pickers
 zenbench	tools	https://github.com/imazen/zenbench	Interleaved microbenchmarking with paired statistics
 archmage	tools	https://github.com/imazen/archmage	Safe SIMD dispatch via CPU capability tokens
 magetypes	tools	https://github.com/imazen/archmage	Shared SIMD primitive types for archmage
@@ -72,3 +82,12 @@ enough	tools	https://github.com/imazen/enough	Cooperative cancellation tokens
 whereat	tools	https://github.com/lilith/whereat	Lightweight error-location tracking, no_std
 cargo-copter	tools	https://github.com/imazen/cargo-copter	Test reverse-deps against multiple crate versions
 zenutils	tools	https://github.com/imazen/zenutils	Shared dev-time helpers: public-API snapshots (zenutils-apidoc), fuzz-regression runner (zenutils-fuzz)
+errat	tools	https://github.com/imazen/errat	Error location tracking with a small sizeof, no_std
+how-far	tools	https://github.com/imazen/how-far	Cooperative cancellation and progress for library code
+cargo-superwork	tools	https://github.com/imazen/cargo-superwork	Multi-repo Rust workspace manager
+cargo-read	tools	https://github.com/imazen/cargo-read	Crate source, README and API structure at a glance
+crate-mcp	tools	https://github.com/imazen/crate-mcp	MCP server for Rust crate lookups
+winarm-cpufeatures	tools	https://github.com/imazen/winarm-cpufeatures	AArch64 CPU feature detection for Windows on ARM
+multiversed	tools	https://github.com/imazen/multiversed	multiversion attribute macros with SIMD target presets
+org-watch	tools	https://github.com/imazen/org-watch	Email alerts when anyone else acts on an imazen repository
+efficient-ui	tools	https://github.com/imazen/efficient-ui	Zero-dependency UI components: image compare, bench charts
