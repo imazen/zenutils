@@ -35,7 +35,7 @@ awk -F'\t' -v self="$SELF" '
     label["codecs"]="**Codecs** \xC2\xB9"; label["internals"]="Codec internals"
     label["compression"]="Compression"; label["process"]="Processing"
     label["color"]="Pixels \x26 color"; label["framework"]="Pipeline \x26 framework"
-    label["metrics"]="Metrics"; label["ml"]="Pickers \x26 ML"
+    label["metrics"]="Psychovisual metrics"; label["ml"]="Pickers \x26 ML"
     label["corpora"]="Test corpora"
     SEP=" \xC2\xB7 "
   }
