@@ -36,7 +36,11 @@ claimed_elsewhere() {
   local m="$1/.workongoing" ts age
   [ -f "$m" ] || return 1
   ts=$(awk 'NR==1{print $1}' "$m")
-  age=$(( $(date -u +%s) - $(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null || echo 0) ))
+  # BSD date (macOS) parses with -j -f; GNU date (Linux) with -d. Without either the lock would read as
+  # stale and the script would edit a repository another session holds.
+  local then
+  then=$(date -j -u -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null || date -u -d "$ts" +%s 2>/dev/null) || return 0
+  age=$(( $(date -u +%s) - then ))
   [ "$age" -lt 300 ] && [ "$age" -gt -300 ]
 }
 
