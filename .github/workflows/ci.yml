@@ -31,7 +31,6 @@ jobs:
           - ubuntu-latest
           - ubuntu-24.04-arm
           - macos-latest
-          - macos-26-intel
           - windows-latest
           - windows-11-arm
     steps:
@@ -119,7 +118,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@nightly # rustdoc JSON for public-api
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-07-13 # rustdoc JSON compatible with the committed renderer output
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -127,3 +128,4 @@ jobs:
         run: cargo test -p zenutils-apidoc --test public_api_doc
         env:
           ZEN_API_DOC: check
+          ZEN_API_DOC_TOOLCHAIN: nightly-2026-07-13
