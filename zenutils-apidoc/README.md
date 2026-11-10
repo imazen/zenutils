@@ -149,3 +149,17 @@ No line appears in more than one file. Within each file:
 ## License
 
 MIT OR Apache-2.0.
+
+
+## Cross-target snapshots
+
+Set `ZEN_API_DOC_TARGET` to the documented target triple, for example
+`aarch64-unknown-linux-gnu` or `wasm32-wasip1`. The renderer passes it to
+`cargo rustdoc`, reads JSON from Cargo's target-specific output directory,
+and labels architecture sections with the target architecture reported by
+rustc. The runner itself still executes on the host. If unset, an explicit
+`CARGO_BUILD_TARGET` is honored; otherwise the existing host behavior is kept.
+Install the target's standard library for `ZEN_API_DOC_TOOLCHAIN` first.
+
+Callers can use a distinct `ApiDoc::out_dir` for each target to maintain
+independent snapshots and checks; rendering one target does not verify another.

@@ -60,6 +60,13 @@
 //! - **`<crate>.txt`** — the supported surface: default features, hidden
 //!   items excluded. What a consumer who types `cargo add <crate>` gets.
 //!
+//! # Cross-target builds
+//!
+//! `ZEN_API_DOC_TARGET` selects the documented target triple. Install that
+//! target for `ZEN_API_DOC_TOOLCHAIN` first. If unset, `CARGO_BUILD_TARGET`
+//! is honored; otherwise builds use the host. JSON paths and architecture
+//! headings follow the documented target, independently of the runner.
+//!
 //! # Architecture handling
 //!
 //! A crate that dispatches SIMD through archmage exposes a different public
@@ -143,6 +150,64 @@ use std::process::Command;
 /// the tracking `nightly`.
 fn toolchain() -> String {
     std::env::var("ZEN_API_DOC_TOOLCHAIN").unwrap_or_else(|_| "nightly".to_owned())
+}
+
+fn requested_target() -> Option<String> {
+    ["ZEN_API_DOC_TARGET", "CARGO_BUILD_TARGET"]
+        .into_iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find(|value| !value.is_empty())
+}
+
+fn arch_from_cfg(cfg: &str) -> Result<&str, &'static str> {
+    cfg.lines()
+        .find_map(|line| line.strip_prefix("target_arch=\"")?.strip_suffix('"'))
+        .ok_or("rustc --print cfg did not report target_arch")
+}
+
+/// Resolve the architecture of the documented crate, not the runner binary.
+fn snapshot_arch() -> &'static str {
+    static ARCH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ARCH.get_or_init(|| {
+        let Some(target) = requested_target() else {
+            return std::env::consts::ARCH.to_owned();
+        };
+        let output = Command::new("rustup")
+            .args([
+                "run",
+                &toolchain(),
+                "rustc",
+                "--print",
+                "cfg",
+                "--target",
+                &target,
+            ])
+            .output()
+            .expect("failed to resolve snapshot target architecture");
+        assert!(
+            output.status.success(),
+            "cannot resolve snapshot target {target}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let cfg = String::from_utf8(output.stdout).expect("rustc cfg is UTF-8");
+        arch_from_cfg(&cfg)
+            .expect("snapshot target architecture missing")
+            .to_owned()
+    })
+}
+
+fn rustdoc_json_path(pkg: &PkgRef, target: Option<&str>) -> PathBuf {
+    let mut path = pkg.target_dir.clone();
+    if let Some(target) = target {
+        // Cargo names custom JSON target directories after the file stem.
+        let target = Path::new(target);
+        path.push(if target.extension().is_some_and(|ext| ext == "json") {
+            target.file_stem().expect("target JSON needs a file name")
+        } else {
+            target.as_os_str()
+        });
+    }
+    path.join("doc").join(format!("{}.json", pkg.json_name))
 }
 
 /// How the extra (non-default-features) snapshot file is built for one
@@ -689,11 +754,15 @@ fn build_json(
     features: &[String],
     hidden: bool,
 ) -> Result<PathBuf, String> {
+    let target = requested_target();
     let mut cmd = Command::new("rustup");
     cmd.args(["run", &toolchain(), "cargo", "rustdoc"])
         .arg("--manifest-path")
         .arg(workspace_root.join("Cargo.toml"))
         .args(["--package", &pkg.spec, "--lib", "--quiet"]);
+    if let Some(target) = &target {
+        cmd.args(["--target", target]);
+    }
     if !features.is_empty() {
         cmd.args(["--features", &features.join(",")]);
     }
@@ -721,10 +790,7 @@ fn build_json(
                 .unwrap_or("see rustdoc output")
         ));
     }
-    let path = pkg
-        .target_dir
-        .join("doc")
-        .join(format!("{}.json", pkg.json_name));
+    let path = rustdoc_json_path(pkg, target.as_deref());
     if !path.exists() {
         return Err(format!("rustdoc JSON not found at {}", path.display()));
     }
@@ -1398,7 +1464,7 @@ fn split_arch_sections(doc: &str) -> (String, BTreeMap<String, String>) {
 /// verifies the portable body plus its own section, and never fails over a
 /// section it cannot possibly generate.
 fn merge_arch_sections(generated: &str, existing: Option<&str>) -> String {
-    merge_arch_sections_on(generated, existing, std::env::consts::ARCH)
+    merge_arch_sections_on(generated, existing, snapshot_arch())
 }
 
 /// [`merge_arch_sections`] with the regenerating target named explicitly, so
@@ -1601,7 +1667,7 @@ impl Transformed {
         }
         let mut s = format!(
             "\n{ARCH_HEADING}{} ({} lines)\n\n",
-            std::env::consts::ARCH,
+            snapshot_arch(),
             self.arch_items.len()
         );
         for l in &self.arch_items {
@@ -2109,6 +2175,45 @@ fn classify(l: &str, tally: &mut Tally, per_module: &mut BTreeMap<String, usize>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cross_target_architecture_comes_from_rustc_cfg() {
+        for arch in ["x86_64", "aarch64", "wasm32"] {
+            let cfg =
+                format!("debug_assertions\ntarget_arch=\"{arch}\"\ntarget_endian=\"little\"\n");
+            assert_eq!(arch_from_cfg(&cfg), Ok(arch));
+        }
+        assert!(arch_from_cfg("target_endian=\"little\"\n").is_err());
+    }
+
+    #[test]
+    fn rustdoc_paths_separate_host_and_cross_target_outputs() {
+        let pkg = PkgRef {
+            spec: "example@1.0.0".to_owned(),
+            json_name: "custom_lib".to_owned(),
+            target_dir: PathBuf::from("target"),
+        };
+        assert_eq!(
+            rustdoc_json_path(&pkg, None),
+            PathBuf::from("target/doc/custom_lib.json")
+        );
+        for target in [
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-gnu",
+            "wasm32-wasip1",
+        ] {
+            assert_eq!(
+                rustdoc_json_path(&pkg, Some(target)),
+                PathBuf::from("target")
+                    .join(target)
+                    .join("doc/custom_lib.json")
+            );
+        }
+        assert_eq!(
+            rustdoc_json_path(&pkg, Some("specs/custom.json")),
+            PathBuf::from("target/custom/doc/custom_lib.json")
+        );
+    }
 
     fn t(lines: &[&str]) -> Transformed {
         let owned: Vec<String> = lines.iter().map(|s| (*s).to_owned()).collect();

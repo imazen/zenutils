@@ -64,6 +64,13 @@ All notable changes to crates in this workspace are documented here, following
 
 ### [Unreleased]
 
+#### QUEUED BREAKING CHANGES
+
+None.
+
+#### Added
+- Cross-target snapshot builds via `ZEN_API_DOC_TARGET` (or `CARGO_BUILD_TARGET`), with target-specific rustdoc JSON paths and architecture labels resolved from rustc. Rust public signatures are unchanged.
+
 #### Fixed
 - `legacy_x86_snapshot_survives_regeneration_elsewhere` failed on every x86_64 host (red CI on ubuntu-latest, windows-latest and macos-26-intel since 2026-09-27): `merge_arch_sections` picks the section to rewrite from the host arch, so on x86_64 the test's "elsewhere" was an x86 regeneration. The merge now takes the regenerating target explicitly (`merge_arch_sections_on`); the test names aarch64. Assertions unchanged (993c864).
 
